@@ -21,13 +21,13 @@
   </header>
 
   <nav class="nav" id="nav">
-    <div class="nav-item active" data-page="rankings">Rankingi drużyn</div>
-    <div class="nav-item" data-page="ketchup">Keczup</div>
-    <div class="nav-item" data-page="optimizer">Optymalizator</div>
-    <div class="nav-item" data-page="homeaway">Dom / Wyjazd</div>
-    <div class="nav-item" data-page="squadbuilder">Buduj skład</div>
-    <div class="nav-item" data-page="myteam">Mój skład</div>
-    <div class="nav-item" data-page="leader">Naśladuj lidera</div>
+    <div class="nav-item active" data-page="rankings" data-i18n="nav.rankings">Rankingi drużyn</div>
+    <div class="nav-item" data-page="ketchup" data-i18n="nav.ketchup">Keczup</div>
+    <div class="nav-item" data-page="optimizer" data-i18n="nav.optimizer">Optymalizator</div>
+    <div class="nav-item" data-page="homeaway" data-i18n="nav.homeAway">Dom / Wyjazd</div>
+    <div class="nav-item" data-page="squadbuilder" data-i18n="nav.squadBuilder">Buduj skład</div>
+    <div class="nav-item" data-page="myteam" data-i18n="nav.myTeam">Mój skład</div>
+    <div class="nav-item" data-page="leader" data-i18n="nav.leader">Naśladuj lidera</div>
   </nav>
 
   <main class="main">
@@ -39,10 +39,10 @@
       <p class="page-desc" data-i18n="rankings.description">Suma punktów drużyn pogrupowanych według pozycji na boisku</p>
 
       <div class="tabs" id="rankings-tabs">
-        <button class="tab active" data-tab="gk">Bramkarze</button>
-        <button class="tab" data-tab="def">Obrońcy</button>
-        <button class="tab" data-tab="mid">Pomocnicy</button>
-        <button class="tab" data-tab="fwd">Napastnicy</button>
+        <button class="tab active" data-tab="gk" data-i18n="rankings.gk">Bramkarze</button>
+        <button class="tab" data-tab="def" data-i18n="rankings.def">Obrońcy</button>
+        <button class="tab" data-tab="mid" data-i18n="rankings.mid">Pomocnicy</button>
+        <button class="tab" data-tab="fwd" data-i18n="rankings.fwd">Napastnicy</button>
       </div>
 
       <div class="card">
@@ -50,10 +50,10 @@
           <thead>
             <tr>
               <th data-sort="rank">#</th>
-              <th data-sort="team">Drużyna</th>
-              <th data-sort="totalPoints">Suma pkt</th>
-              <th data-sort="avgPoints">Śr. pkt/zaw.</th>
-              <th data-sort="playerCount">Zawodników</th>
+              <th data-sort="team" data-i18n="rankings.team">Drużyna</th>
+              <th data-sort="totalPoints" data-i18n="rankings.totalPoints">Suma pkt</th>
+              <th data-sort="avgPoints" data-i18n="rankings.avgPoints">Śr. pkt/zaw.</th>
+              <th data-sort="playerCount" data-i18n="rankings.playerCount">Zawodników</th>
             </tr>
           </thead>
           <tbody id="rankings-body"></tbody>
@@ -62,56 +62,190 @@
     </div>
 
     <div class="page" id="page-ketchup">
-      <h1 class="page-title">Keczup</h1>
-      <p class="page-desc">Zawodnicy na progu formy — wysokie xP, niskie realne punkty</p>
-      <div class="placeholder">
-        <div class="placeholder-icon">🍅</div>
-        <div>Wkrótce — wymaga pobrania element-summary dla zawodników</div>
+      <h1 class="page-title" data-i18n="ketchup.title">Keczup</h1>
+      <p class="page-desc" data-i18n="ketchup.description">Zawodnicy na progu formy — wysokie xP, niskie realne punkty</p>
+      <div class="card" id="ketchup-controls">
+        <div class="form-row">
+          <div class="form-group">
+            <label data-i18n="common.filter">Filtruj</label>
+            <select id="ketchup-gw-count">
+              <option value="3">3 GW</option>
+              <option value="5" selected>5 GW</option>
+              <option value="8">8 GW</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label data-i18n="common.sort">Sortuj</label>
+            <select id="ketchup-sort">
+              <option value="diff" data-i18n="ketchup.diff">Różnica</option>
+              <option value="expectedPts" data-i18n="ketchup.expectedPts">xP</option>
+            </select>
+          </div>
+          <button class="btn" id="ketchup-run" data-i18n="optimizer.calculate">Oblicz</button>
+        </div>
+      </div>
+      <div class="card">
+        <div id="ketchup-loading" class="loading" style="display:none"><div class="spinner"></div><div data-i18n="common.loading">Ładowanie danych...</div></div>
+        <div id="ketchup-placeholder" class="placeholder">
+          <div class="placeholder-icon">🍅</div>
+          <div data-i18n="ketchup.placeholder">Wkrótce — wymaga pobrania element-summary dla zawodników</div>
+        </div>
+        <table id="ketchup-table" style="display:none">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th data-i18n="ketchup.webName">Zawodnik</th>
+              <th data-i18n="ketchup.team">Drużyna</th>
+              <th data-i18n="ketchup.position">Poz</th>
+              <th data-i18n="ketchup.price">Cena</th>
+              <th data-i18n="ketchup.totalPts">Pkt</th>
+              <th data-i18n="ketchup.expectedPts">xP</th>
+              <th data-i18n="ketchup.diff">Różnica</th>
+            </tr>
+          </thead>
+          <tbody id="ketchup-body"></tbody>
+        </table>
       </div>
     </div>
 
     <div class="page" id="page-optimizer">
-      <h1 class="page-title">Optymalizator budżetowy</h1>
-      <p class="page-desc">Suwak budżetu → automatyczny dobór składu</p>
-      <div class="placeholder">
-        <div class="placeholder-icon">🧮</div>
-        <div>Wkrótce — solver doboru składu</div>
+      <h1 class="page-title" data-i18n="optimizer.title">Optymalizator budżetowy</h1>
+      <p class="page-desc" data-i18n="optimizer.description">Suwak budżetu → automatyczny dobór składu</p>
+      <div class="card" id="optimizer-controls">
+        <div class="form-row">
+          <div class="form-group">
+            <label data-i18n="optimizer.budget">Budżet</label>
+            <input type="range" id="optimizer-budget" min="800" max="1000" value="1000" step="10">
+          </div>
+          <span id="optimizer-budget-display" class="stat-val">100.0</span>
+          <button class="btn" id="optimizer-run" data-i18n="optimizer.calculate">Oblicz</button>
+        </div>
+      </div>
+      <div class="card">
+        <div id="optimizer-loading" class="loading" style="display:none"><div class="spinner"></div><div data-i18n="common.loading">Ładowanie danych...</div></div>
+        <div id="optimizer-placeholder" class="placeholder">
+          <div class="placeholder-icon">🧮</div>
+          <div data-i18n="optimizer.placeholder">Wkrótce — solver doboru składu</div>
+        </div>
+        <table id="optimizer-table" style="display:none">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th data-i18n="ketchup.webName">Zawodnik</th>
+              <th data-i18n="ketchup.team">Drużyna</th>
+              <th data-i18n="ketchup.position">Poz</th>
+              <th data-i18n="ketchup.price">Cena</th>
+              <th data-i18n="ketchup.totalPts">Pkt</th>
+            </tr>
+          </thead>
+          <tbody id="optimizer-body"></tbody>
+        </table>
       </div>
     </div>
 
     <div class="page" id="page-homeaway">
-      <h1 class="page-title">Dom / Wyjazd</h1>
-      <p class="page-desc">Zawodnicy z różnicą w punktowaniu mecz domowy vs wyjazdowy</p>
-      <div class="placeholder">
-        <div class="placeholder-icon">🏠</div>
-        <div>Wkrótce — analiza was_home z historii</div>
+      <h1 class="page-title" data-i18n="homeAway.title">Dom / Wyjazd</h1>
+      <p class="page-desc" data-i18n="homeAway.description">Zawodnicy z różnicą w punktowaniu mecz domowy vs wyjazdowy (średnia pkt/mecz z element-summary, top 40 zawodników)</p>
+      <div class="card" id="homeaway-controls">
+        <div class="form-row">
+          <div class="form-group">
+            <label data-i18n="common.filter">Filtruj</label>
+            <select id="homeaway-position">
+              <option value="0" data-i18n="common.all">Wszystkie</option>
+              <option value="1" data-i18n="rankings.gk">Bramkarze</option>
+              <option value="2" data-i18n="rankings.def">Obrońcy</option>
+              <option value="3" data-i18n="rankings.mid">Pomocnicy</option>
+              <option value="4" data-i18n="rankings.fwd">Napastnicy</option>
+            </select>
+          </div>
+          <button class="btn" id="homeaway-run" data-i18n="optimizer.calculate">Oblicz</button>
+        </div>
+      </div>
+      <div class="card">
+        <div id="homeaway-loading" class="loading" style="display:none"><div class="spinner"></div><div data-i18n="common.loading">Ładowanie danych...</div></div>
+        <div id="homeaway-placeholder" class="placeholder">
+          <div class="placeholder-icon">🏠</div>
+          <div data-i18n="homeAway.placeholder">Wkrótce — analiza was_home z historii</div>
+        </div>
+        <table id="homeaway-table" style="display:none">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th data-i18n="ketchup.webName">Zawodnik</th>
+              <th data-i18n="ketchup.team">Drużyna</th>
+              <th data-i18n="ketchup.position">Poz</th>
+              <th data-i18n="homeAway.home">Dom</th>
+              <th data-i18n="homeAway.away">Wyjazd</th>
+              <th data-i18n="homeAway.diff">Różnica</th>
+            </tr>
+          </thead>
+          <tbody id="homeaway-body"></tbody>
+        </table>
       </div>
     </div>
 
     <div class="page" id="page-squadbuilder">
-      <h1 class="page-title">Buduj skład</h1>
-      <p class="page-desc">Rozszerzony optymalizator z filtrami</p>
+      <h1 class="page-title" data-i18n="squadBuilder.title">Buduj skład</h1>
+      <p class="page-desc" data-i18n="squadBuilder.description">Rozszerzony optymalizator z filtrami</p>
       <div class="placeholder">
         <div class="placeholder-icon">🔧</div>
-        <div>Wkrótce — budowa składu na podstawie filtrów</div>
+        <div data-i18n="squadBuilder.placeholder">Wkrótce — budowa składu na podstawie filtrów</div>
       </div>
     </div>
 
     <div class="page" id="page-myteam">
-      <h1 class="page-title">Mój skład</h1>
-      <p class="page-desc">Porównaj swój skład z optymalnym</p>
-      <div class="placeholder">
-        <div class="placeholder-icon">👥</div>
-        <div>Wkrótce — wpisz ID menedżera by zobaczyć skład</div>
+      <h1 class="page-title" data-i18n="myTeam.title">Mój skład</h1>
+      <p class="page-desc" data-i18n="myTeam.description">Porównaj swój skład z optymalnym</p>
+      <div class="card" id="myteam-controls">
+        <div class="form-row">
+          <div class="form-group">
+            <label data-i18n="myTeam.managerId">ID menedżera</label>
+            <input type="number" id="myteam-id" placeholder="np. 12345">
+          </div>
+          <button class="btn" id="myteam-run" data-i18n="myTeam.load">Pobierz skład</button>
+        </div>
+      </div>
+      <div class="card">
+        <div id="myteam-loading" class="loading" style="display:none"><div class="spinner"></div><div data-i18n="common.loading">Ładowanie danych...</div></div>
+        <div id="myteam-placeholder" class="placeholder">
+          <div class="placeholder-icon">👥</div>
+          <div data-i18n="myTeam.placeholder">Wkrótce — wpisz ID menedżera by zobaczyć skład</div>
+        </div>
+        <table id="myteam-table" style="display:none">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th data-i18n="ketchup.webName">Zawodnik</th>
+              <th data-i18n="ketchup.team">Drużyna</th>
+              <th data-i18n="ketchup.position">Poz</th>
+              <th data-i18n="ketchup.price">Cena</th>
+              <th data-i18n="ketchup.totalPts">Pkt</th>
+            </tr>
+          </thead>
+          <tbody id="myteam-body"></tbody>
+        </table>
       </div>
     </div>
 
     <div class="page" id="page-leader">
-      <h1 class="page-title">Naśladuj lidera</h1>
-      <p class="page-desc">Porównanie z liderem ligi i sugestie transferów</p>
-      <div class="placeholder">
-        <div class="placeholder-icon">🏆</div>
-        <div>Wkrótce — porównanie z liderem ligi</div>
+      <h1 class="page-title" data-i18n="leader.title">Naśladuj lidera</h1>
+      <p class="page-desc" data-i18n="leader.description">Porównanie z liderem ligi i sugestie transferów</p>
+      <div class="card" id="leader-controls">
+        <div class="form-row">
+          <div class="form-group">
+            <label data-i18n="leader.leagueId">ID ligi</label>
+            <input type="number" id="leader-id" placeholder="np. 12345">
+          </div>
+          <button class="btn" id="leader-run" data-i18n="leader.load">Pobierz tabelę</button>
+        </div>
+      </div>
+      <div class="card">
+        <div id="leader-loading" class="loading" style="display:none"><div class="spinner"></div><div data-i18n="common.loading">Ładowanie danych...</div></div>
+        <div id="leader-placeholder" class="placeholder">
+          <div class="placeholder-icon">🏆</div>
+          <div data-i18n="leader.placeholder">Wkrótce — porównanie z liderem ligi</div>
+        </div>
+        <div id="leader-result" style="display:none"></div>
       </div>
     </div>
 
