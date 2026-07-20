@@ -65,6 +65,10 @@ export const translations = {
       placeholder: "Wkrótce — wpisz ID menedżera by zobaczyć skład",
       managerId: "ID menedżera",
       load: "Pobierz skład",
+      yourPts: "Twoje pkt",
+      yourPct: "% składu",
+      yourGWs: "Kolejek",
+      totalPts: "Łącznie pkt",
     },
     leader: {
       title: "Naśladuj lidera",
@@ -153,6 +157,10 @@ export const translations = {
       placeholder: "Coming soon — enter manager ID to see squad",
       managerId: "Manager ID",
       load: "Load squad",
+      yourPts: "Your Pts",
+      yourPct: "% of squad",
+      yourGWs: "GWs",
+      totalPts: "Total Pts",
     },
     leader: {
       title: "Follow Leader",
