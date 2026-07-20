@@ -36,7 +36,10 @@ function initLang() {
     setLang(getLang() === "pl" ? "en" : "pl");
     btn.textContent = getLang() === "pl" ? "EN" : "PL";
     applyTranslations();
-    if (bootstrapData) renderRankings();
+    if (bootstrapData) {
+      updateSeasonBanner(bootstrapData);
+      renderRankings();
+    }
   });
 }
 
@@ -46,23 +49,51 @@ function applyTranslations() {
   });
 }
 
+function detectSeason(data) {
+  const url = data?.game_settings?.static_content_url || "";
+  const match = url.match(/(\d{4})_(\d{2})/);
+  if (match) {
+    const startYear = match[1];
+    const endShort = match[2];
+    return `${startYear}/${endShort}`;
+  }
+  const gw = data.events?.find((e) => e.is_current) || data.events?.[data.events.length - 1];
+  if (gw?.deadline_time) {
+    const year = new Date(gw.deadline_time).getFullYear();
+    return `${year - 1}/${String(year).slice(2)}`;
+  }
+  return "?";
+}
+
+function getSeasonLabel(data) {
+  const season = detectSeason(data);
+  const lang = getLang();
+  return lang === "pl" ? `Sezon ${season}` : `Season ${season}`;
+}
+
+function updateSeasonBanner(data) {
+  const el = document.getElementById("season-banner");
+  if (!el || !data) return;
+  const gw = data.events?.find((e) => e.is_current) || data.events?.[data.events.length - 1];
+  const gwName = gw?.name || `GW${gw?.id ?? "?"}`;
+  const finished = gw?.finished;
+  const lang = getLang();
+  const seasonText = getSeasonLabel(data);
+  const statusText = finished
+    ? (lang === "pl" ? "Sezon zakończony" : "Season finished")
+    : gwName;
+  el.textContent = `${seasonText} · ${statusText} · ${data.elements?.length ?? "?"} ${lang === "pl" ? "zawodników" : "players"}`;
+}
+
 async function loadData() {
   const body = document.getElementById("rankings-body");
   body.innerHTML = `<tr><td colspan="5"><div class="loading"><div class="spinner"></div><div>${t("common.loading")}</div></div></td></tr>`;
   try {
     bootstrapData = await getBootstrapStatic();
+    updateSeasonBanner(bootstrapData);
     renderRankings();
-    updateCacheStatus(bootstrapData);
   } catch (err) {
     body.innerHTML = `<tr><td colspan="5"><div class="error-msg">${t("common.error")}: ${err.message}</div></td></tr>`;
-  }
-}
-
-function updateCacheStatus(data) {
-  const el = document.getElementById("cache-status");
-  if (data?.elements) {
-    const gw = data.events?.find((e) => e.is_current) || data.events?.[data.events.length - 1];
-    el.textContent = `GW${gw?.id ?? "?"} · ${data.elements.length} zaw. · ${new Date().toLocaleTimeString("pl-PL")}`;
   }
 }
 
@@ -95,7 +126,8 @@ function buildRankingsData(posKey) {
   for (const r of result) {
     r.avgPoints = r.playerCount > 0 ? +(r.totalPoints / r.playerCount).toFixed(1) : 0;
   }
-  result.sort((a, b) => b[currentSortField] - a[currentSortField]);
+  const dir = currentSortDir === "desc" ? -1 : 1;
+  result.sort((a, b) => (b[currentSortField] - a[currentSortField]) * dir);
   return result;
 }
 

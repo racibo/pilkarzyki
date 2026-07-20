@@ -104,6 +104,22 @@ a:hover { text-decoration: underline; }
   padding: 24px;
 }
 
+.season-banner {
+  background: linear-gradient(135deg, #3b82f622, #a855f722);
+  border: 1px solid #3b82f644;
+  border-radius: var(--radius);
+  padding: 10px 16px;
+  margin-bottom: 20px;
+  font-size: 0.85rem;
+  color: var(--accent);
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+
+.season-banner:empty {
+  display: none;
+}
+
 .page { display: none; }
 .page.active { display: block; }
 
