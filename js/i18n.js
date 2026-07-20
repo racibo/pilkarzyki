@@ -10,6 +10,7 @@ export const translations = {
       squadBuilder: "Buduj skład",
       myTeam: "Mój skład",
       leader: "Naśladuj lidera",
+      naStart: "Na start",
     },
     rankings: {
       title: "Rankingi drużyn per linia",
@@ -77,6 +78,11 @@ export const translations = {
       leagueId: "ID ligi",
       load: "Pobierz tabelę",
     },
+    naStart: {
+      title: "Na start",
+      description: "Porównanie cen z sezonu 26/27 z punktami zdobytymi w 25/26 — kto jest najlepszą wartością?",
+      ptsPerCost: "pkt/m",
+    },
     common: {
       loading: "Ładowanie danych...",
       error: "Błąd ładowania danych",
@@ -102,6 +108,7 @@ export const translations = {
       squadBuilder: "Build Squad",
       myTeam: "My Team",
       leader: "Follow Leader",
+      naStart: "On Start",
     },
     rankings: {
       title: "Team Rankings by Position",
@@ -168,6 +175,11 @@ export const translations = {
       placeholder: "Coming soon — compare with league leader",
       leagueId: "League ID",
       load: "Load standings",
+    },
+    naStart: {
+      title: "On Start",
+      description: "Compare 26/27 prices with 25/26 points — who is the best value?",
+      ptsPerCost: "pts/m",
     },
     common: {
       loading: "Loading data...",

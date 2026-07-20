@@ -2,10 +2,6 @@ const FPL_BASE = "https://fantasy.premierleague.com/api";
 
 const cache = {};
 
-function getCacheKey(path) {
-  return path;
-}
-
 function isCacheValid(entry, ttlMs) {
   return entry && Date.now() - entry.ts < ttlMs;
 }
@@ -46,9 +42,8 @@ exports.handler = async (event) => {
 
   const safePath = path.replace(/[^a-zA-Z0-9/_\-\.?&=]/g, "");
   const ttl = getTtl(safePath);
-  const key = getCacheKey(safePath);
 
-  if (isCacheValid(cache[key], ttl)) {
+  if (isCacheValid(cache[safePath], ttl)) {
     return {
       statusCode: 200,
       headers: {
@@ -56,7 +51,7 @@ exports.handler = async (event) => {
         "Access-Control-Allow-Origin": "*",
         "X-Cache": "HIT",
       },
-      body: JSON.stringify(cache[key].data),
+      body: JSON.stringify(cache[safePath].data),
     };
   }
 
@@ -73,12 +68,12 @@ exports.handler = async (event) => {
       return {
         statusCode: res.status,
         headers: { "Access-Control-Allow-Origin": "*" },
-        body: JSON.stringify({ error: `FPL API returned ${res.status}` }),
+        body: JSON.stringify({ error: `FPL API returned ${res.status}`, status: res.status }),
       };
     }
 
     const data = await res.json();
-    cache[key] = { data, ts: Date.now() };
+    cache[safePath] = { data, ts: Date.now() };
 
     return {
       statusCode: 200,

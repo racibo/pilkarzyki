@@ -28,6 +28,7 @@
     <div class="nav-item" data-page="squadbuilder" data-i18n="nav.squadBuilder">Buduj skład</div>
     <div class="nav-item" data-page="myteam" data-i18n="nav.myTeam">Mój skład</div>
     <div class="nav-item" data-page="leader" data-i18n="nav.leader">Naśladuj lidera</div>
+    <div class="nav-item" data-page="nastart" data-i18n="nav.naStart">Na start</div>
   </nav>
 
   <main class="main">
@@ -131,11 +132,11 @@
           <thead>
             <tr>
               <th>#</th>
-              <th data-i18n="ketchup.webName">Zawodnik</th>
+              <th data-sort="web_name" data-i18n="ketchup.webName">Zawodnik</th>
               <th data-i18n="ketchup.team">Drużyna</th>
               <th data-i18n="ketchup.position">Poz</th>
-              <th data-i18n="ketchup.price">Cena</th>
-              <th data-i18n="ketchup.totalPts">Pkt</th>
+              <th data-sort="now_cost" data-i18n="ketchup.price">Cena</th>
+              <th data-sort="total_points" data-i18n="ketchup.totalPts">Pkt</th>
             </tr>
           </thead>
           <tbody id="optimizer-body"></tbody>
@@ -174,9 +175,9 @@
               <th data-i18n="ketchup.webName">Zawodnik</th>
               <th data-i18n="ketchup.team">Drużyna</th>
               <th data-i18n="ketchup.position">Poz</th>
-              <th data-i18n="homeAway.home">Dom</th>
-              <th data-i18n="homeAway.away">Wyjazd</th>
-              <th data-i18n="homeAway.diff">Różnica</th>
+              <th data-sort="homeAvg" data-i18n="homeAway.home">Dom</th>
+              <th data-sort="awayAvg" data-i18n="homeAway.away">Wyjazd</th>
+              <th data-sort="diff" data-i18n="homeAway.diff">Różnica</th>
             </tr>
           </thead>
           <tbody id="homeaway-body"></tbody>
@@ -247,6 +248,27 @@
           <div data-i18n="leader.placeholder">Wkrótce — porównanie z liderem ligi</div>
         </div>
         <div id="leader-result" style="display:none"></div>
+      </div>
+    </div>
+
+    <div class="page" id="page-nastart">
+      <h1 class="page-title" data-i18n="naStart.title">Na start</h1>
+      <p class="page-desc" data-i18n="naStart.description">Porównanie cen z sezonu 26/27 z punktami zdobytymi w 25/26 — kto jest najlepszą wartością?</p>
+      <div class="card">
+        <table id="nastart-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th data-i18n="ketchup.webName">Zawodnik</th>
+              <th data-i18n="ketchup.team">Drużyna</th>
+              <th data-i18n="ketchup.position">Poz</th>
+              <th data-i18n="ketchup.price">Cena</th>
+              <th data-i18n="ketchup.totalPts">Pkt 25/26</th>
+              <th data-i18n="naStart.ptsPerCost">pkt/m</th>
+            </tr>
+          </thead>
+          <tbody id="nastart-body"></tbody>
+        </table>
       </div>
     </div>
 
