@@ -1,0 +1,9 @@
+{
+  "name": "fpl-scout",
+  "version": "1.0.0",
+  "description": "Narzędzie do Fantasy Premier League",
+  "private": true,
+  "scripts": {
+    "dev": "npx netlify dev"
+  }
+}
