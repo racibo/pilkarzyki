@@ -815,3 +815,6 @@ td {
 .top15-chart .chart-svg {
   min-width: 700px;
 }
+
+.leaflet-popup-content { margin: 8px 12px; }
+.stadium-popup-toggle:hover { opacity: 0.7; text-decoration: underline; }

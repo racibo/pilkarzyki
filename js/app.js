@@ -1316,15 +1316,20 @@ async function runMyTeam() {
       </div>`;
 
     document.getElementById("myteam-tabs").style.display = "";
+    document.getElementById("myteam-loading").style.display = "none";
+    showSection("myteam", "table");
+    document.getElementById("myteam-overview-tab").style.display = "";
+    ["reserves", "captains", "gwhistory"].forEach(k => {
+      document.getElementById(`myteam-${k}-tab`).style.display = "none";
+    });
 
-    // === REZERWOwi TAB — full per-GW bench breakdown ===
+    // === REZERWOwi TAB ===
+    try {
     const worstBench = [...reserveLost].sort((a, b) => b.benchPts - a.benchPts).slice(0, 5);
     const avgBenchPts = gws.length > 0 ? (totalBenchLost / gws.length).toFixed(1) : "0";
     const maxBenchGW = reserveLost.length > 0 ? reserveLost.reduce((m, r) => r.benchPts > m.benchPts ? r : m, reserveLost[0]) : null;
     const benchZeroCount = reserveLost.filter(r => r.benchPts === 0).length;
-    const benchPositiveGWs = reserveLost.filter(r => r.benchPts > 0);
 
-    // Per-GW full bench breakdown
     const benchTableRows = gws.map(gw => {
       const picksData = gwPicksData[gw];
       const picks = picksData.picks || [];
@@ -1333,7 +1338,6 @@ async function runMyTeam() {
       const benchInfo = bench.map(b => {
         const player = bootstrapData.elements.find(p => p.id === b.element);
         const pts = playerGwMap[b.element]?.[gw] || 0;
-        // find cheapest starter in same position that bench player could replace
         const samePosStarters = starting.filter(s => {
           const sp = bootstrapData.elements.find(p => p.id === s.element);
           return sp && sp.element_type === player?.element_type;
@@ -1362,16 +1366,16 @@ async function runMyTeam() {
 
       <h3 style="padding:12px 16px;color:var(--green);margin-top:12px">${lang === "pl" ? "Podsumowanie ławki" : "Bench summary"}</h3>
       <div style="padding:8px 16px;display:flex;flex-wrap:wrap;gap:12px">
-        <div class="leader-card" style="flex:1;min-width:140px"><h3 style="color:var(--red);font-size:0.9rem">🪑 ${lang === "pl" ? "Stracone" : "Lost"}</h3>
+        <div class="leader-card" style="flex:1;min-width:140px"><h3 style="color:var(--red);font-size:0.9rem">${lang === "pl" ? "Stracone" : "Lost"}</h3>
           <div style="font-size:1.3rem;font-weight:700;color:var(--red)">${totalBenchLost} pkt</div>
           <div style="color:var(--text-dim);font-size:0.8rem">${avgBenchPts} pkt/kolejkę</div></div>
-        <div class="leader-card" style="flex:1;min-width:140px"><h3 style="color:var(--yellow);font-size:0.9rem">🔄 ${lang === "pl" ? "Możliwe zyski" : "Opportunity gain"}</h3>
+        <div class="leader-card" style="flex:1;min-width:140px"><h3 style="color:var(--yellow);font-size:0.9rem">${lang === "pl" ? "Możliwe zyski" : "Opportunity gain"}</h3>
           <div style="font-size:1.3rem;font-weight:700;color:var(--yellow)">${totalOppGain} pkt</div>
           <div style="color:var(--text-dim);font-size:0.8rem">${lang === "pl" ? "gdyby zmienić ławkę" : "if bench swapped"}</div></div>
-        <div class="leader-card" style="flex:1;min-width:140px"><h3 style="color:var(--green);font-size:0.9rem">🎯 ${lang === "pl" ? "Kolejki bez strat" : "Zero-loss GWs"}</h3>
+        <div class="leader-card" style="flex:1;min-width:140px"><h3 style="color:var(--green);font-size:0.9rem">${lang === "pl" ? "Kolejki bez strat" : "Zero-loss GWs"}</h3>
           <div style="font-size:1.3rem;font-weight:700;color:var(--green)">${benchZeroCount}</div>
           <div style="color:var(--text-dim);font-size:0.8rem">${lang === "pl" ? `z ${gws.length} kolejek` : `of ${gws.length} GWs`}</div></div>
-        <div class="leader-card" style="flex:1;min-width:140px"><h3 style="color:var(--accent);font-size:0.9rem">📊 ${lang === "pl" ? "Najgorszy GW" : "Worst GW"}</h3>
+        <div class="leader-card" style="flex:1;min-width:140px"><h3 style="color:var(--accent);font-size:0.9rem">${lang === "pl" ? "Najgorszy GW" : "Worst GW"}</h3>
           <div style="font-size:1.3rem;font-weight:700;color:var(--accent)">${maxBenchGW ? "GW" + maxBenchGW.gw : "-"}</div>
           <div style="color:var(--text-dim);font-size:0.8rem">${maxBenchGW ? "-" + maxBenchGW.benchPts + " pkt" : ""}</div></div>
       </div>
@@ -1405,8 +1409,10 @@ async function runMyTeam() {
       <div style="padding:12px 16px;color:var(--text-dim);font-size:0.85rem;border-top:1px solid var(--border)">
         ${lang === "pl" ? `Łącznie stracono ${totalBenchLost} pkt wybierając skład zamiast rezerwowych. Możliwy dodatkowy zysk: ${totalOppGain} pkt` : `Total ${totalBenchLost} pts lost. Potential gain from swaps: ${totalOppGain} pts`}
       </div>`;
+    } catch(e) { document.getElementById("myteam-reserves-tab").innerHTML = `<div style="padding:16px;color:var(--red)">Błąd ładowania rezerwowych: ${e.message}</div>`; }
 
-    // === KAPITANOWIE TAB — expanded analysis ===
+    // === KAPITANOWIE TAB ===
+    try {
     const vcData = [];
     for (const gw of gws) {
       const picksData = gwPicksData[gw];
@@ -1430,17 +1436,17 @@ async function runMyTeam() {
     document.getElementById("myteam-captains-tab").innerHTML = `
       <h3 style="padding:12px 16px;color:var(--green)">${lang === "pl" ? "Podsumowanie kapitanów" : "Captain summary"}</h3>
       <div style="padding:8px 16px;display:flex;flex-wrap:wrap;gap:12px">
-        <div class="leader-card" style="flex:1;min-width:140px"><h3 style="color:var(--green);font-size:0.9rem">✅ ${lang === "pl" ? "Najlepszy wybór" : "Best pick"}</h3>
+        <div class="leader-card" style="flex:1;min-width:140px"><h3 style="color:var(--green);font-size:0.9rem">${lang === "pl" ? "Najlepszy wybór" : "Best pick"}</h3>
           <div style="font-size:1.3rem;font-weight:700;color:var(--green)">${captainBestCount}/${gws.length}</div>
           <div style="color:var(--text-dim);font-size:0.8rem">${((captainBestCount / gws.length) * 100).toFixed(0)}% ${lang === "pl" ? "kolejek" : "GWs"}</div></div>
-        <div class="leader-card" style="flex:1;min-width:140px"><h3 style="color:var(--yellow);font-size:0.9rem">🟡 ${lang === "pl" ? "W top 3" : "In top 3"}</h3>
+        <div class="leader-card" style="flex:1;min-width:140px"><h3 style="color:var(--yellow);font-size:0.9rem">${lang === "pl" ? "W top 3" : "In top 3"}</h3>
           <div style="font-size:1.3rem;font-weight:700;color:var(--yellow)">${captainTop3Count}/${gws.length}</div>
           <div style="color:var(--text-dim);font-size:0.8rem">${((captainTop3Count / gws.length) * 100).toFixed(0)}%</div></div>
-        <div class="leader-card" style="flex:1;min-width:140px"><h3 style="color:var(--accent);font-size:0.9rem">🎯 ${lang === "pl" ? "Skuteczność" : "Efficiency"}</h3>
+        <div class="leader-card" style="flex:1;min-width:140px"><h3 style="color:var(--accent);font-size:0.9rem">${lang === "pl" ? "Skuteczność" : "Efficiency"}</h3>
           <div style="font-size:1.3rem;font-weight:700;color:var(--accent)">${capEfficiency}%</div>
           <div style="color:var(--text-dim);font-size:0.8rem">${lang === "pl" ? "vs max możliwe" : "vs max possible"}</div></div>
-        <div class="leader-card" style="flex:1;min-width:140px"><h3 style="color:var(--blue);font-size:0.9rem">📊 ${lang === "pl" ? "Średnia C" : "Avg C pts"}</h3>
-          <div style="font-size:1.3rem;font-weight:700;color:var(--blue)">${capAvgPts}</div>
+        <div class="leader-card" style="flex:1;min-width:140px"><h3 style="color:var(--accent);font-size:0.9rem">${lang === "pl" ? "Średnia C" : "Avg C pts"}</h3>
+          <div style="font-size:1.3rem;font-weight:700;color:var(--accent)">${capAvgPts}</div>
           <div style="color:var(--text-dim);font-size:0.8rem">${lang === "pl" ? "pkt/kolejkę" : "pts/GW"}</div></div>
       </div>
 
@@ -1456,7 +1462,7 @@ async function runMyTeam() {
       </tr></thead><tbody>
       ${captainData.map(c => {
         const statusColor = c.wasCaptainBest ? "var(--green)" : c.wasCaptainInTop3 ? "var(--yellow)" : "var(--red)";
-        const statusText = c.wasCaptainBest ? "✅ C" : c.wasCaptainInTop3 ? "🟡 Top3" : "❌";
+        const statusText = c.wasCaptainBest ? "C" : c.wasCaptainInTop3 ? "Top3" : "X";
         const loss = c.wasCaptainBest ? 0 : (c.bestPlayerPts * 2 - c.captainPts);
         const lossText = loss > 0 ? `<span style="color:var(--red)">-${loss}</span>` : `<span style="color:var(--green)">0</span>`;
         return `<tr>
@@ -1472,7 +1478,7 @@ async function runMyTeam() {
       </tbody></table>
       </div>
 
-      <h3 style="padding:12px 16px;color:var(--blue);margin-top:12px">${lang === "pl" ? "Vice-Kapitan — analiza" : "Vice-Captain analysis"}</h3>
+      <h3 style="padding:12px 16px;color:var(--accent);margin-top:12px">${lang === "pl" ? "Vice-Kapitan — analiza" : "Vice-Captain analysis"}</h3>
       <div style="overflow-x:auto">
       <table><thead><tr>
         <th>GW</th>
@@ -1488,7 +1494,7 @@ async function runMyTeam() {
           <td><b>${v.vcName}</b> (VC)</td>
           <td class="stat-val" style="color:${color}">${v.vcPts}</td>
           <td>${v.capPts}</td>
-          <td style="color:${v.vcBetter ? 'var(--green)' : 'var(--red)'};font-weight:600">${v.vcBetter ? "✅" : "❌"}</td>
+          <td style="color:${v.vcBetter ? 'var(--green)' : 'var(--red)'};font-weight:600">${v.vcBetter ? "+" : "X"}</td>
         </tr>`;
       }).join("")}
       </tbody></table>
@@ -1500,10 +1506,13 @@ async function runMyTeam() {
       </div>
 
       ${worstMiss ? `<div style="padding:12px 16px;border-top:1px solid var(--border)">
-        <span style="color:var(--red);font-weight:600">💀 ${lang === "pl" ? "Najgorszy wybór C" : "Worst captain pick"}:</span>
+        <span style="color:var(--red);font-weight:600">${lang === "pl" ? "Najgorszy wybór C" : "Worst captain pick"}:</span>
         <span style="color:var(--text-dim)"> GW${worstMiss.gw} — ${worstMiss.captainName} (${worstMiss.captainPts} pkt) vs ${worstMiss.bestPlayerName} (${worstMiss.bestPlayerPts} pkt, strata ${worstMiss.bestPlayerPts * 2 - worstMiss.captainPts} pkt)</span>
       </div>` : ""}`;
+    } catch(e) { document.getElementById("myteam-captains-tab").innerHTML = `<div style="padding:16px;color:var(--red)">Błąd ładowania kapitanów: ${e.message}</div>`; }
 
+    // === GW HISTORY TAB ===
+    try {
     document.getElementById("myteam-gwhistory-tab").innerHTML = `
       <h3 style="padding:12px 16px">${lang === "pl" ? "Historia punktów w kolejce" : "Gameweek history"}</h3>
       <table><thead><tr>
@@ -1524,13 +1533,7 @@ async function runMyTeam() {
         </tr>`;
       }).join("")}
       </tbody></table>`;
-
-    document.getElementById("myteam-loading").style.display = "none";
-    showSection("myteam", "table");
-    document.getElementById("myteam-overview-tab").style.display = "";
-    ["reserves", "captains", "gwhistory"].forEach(k => {
-      document.getElementById(`myteam-${k}-tab`).style.display = "none";
-    });
+    } catch(e) { document.getElementById("myteam-gwhistory-tab").innerHTML = `<div style="padding:16px;color:var(--red)">Błąd ładowania historii: ${e.message}</div>`; }
   } catch (err) {
     document.getElementById("myteam-body").innerHTML =
       `<tr><td colspan="7"><div class="error-msg">${t("common.error")}: ${err.message}</div></td></tr>`;
@@ -2848,6 +2851,10 @@ function renderStadiumsMap() {
     const regionColors = { london: "#f59e0b", north: "#3b82f6", midlands: "#a855f7", south: "#22c55e", east: "#ef4444" };
     const lang = getLang();
 
+    const TEAM_PREV_SEASONS = {};
+    const seasons = ["2024-25", "2023-24", "2022-23", "2021-22"];
+    const seasonNames = { "2024-25": "24/25", "2023-24": "23/24", "2022-23": "22/23", "2021-22": "21/22" };
+
     computePLStandings().then(({ standings, sorted, posHistory }) => {
     for (const [id, t] of Object.entries(TEAM_COORDS)) {
       const tid = parseInt(id);
@@ -2857,8 +2864,7 @@ function renderStadiumsMap() {
       const pos = sorted.findIndex(s => s.id === tid) + 1;
       const hist = posHistory[tid] || [];
       const prevPos = hist.length >= 2 ? hist[hist.length - 2].pos : null;
-      const trend = prevPos ? (pos < prevPos ? "▲" : pos > prevPos ? "▼" : "=") : "";
-      const trendColor = pos < prevPos ? "var(--green)" : pos > prevPos ? "var(--red)" : "var(--text-dim)";
+      const trend = prevPos ? (pos < prevPos ? "+" : pos > prevPos ? "-" : "=") : "";
 
       const posBadge = `<div style="position:absolute;top:-8px;right:-8px;background:${teamColor};color:#fff;font-weight:700;font-size:0.7rem;width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid #1a1d27;z-index:10">${pos}</div>`;
 
@@ -2867,37 +2873,30 @@ function renderStadiumsMap() {
         className: "stadium-marker"
       }).addTo(map);
 
-      // Per-GW position sparkline as text
-      const posTrend = hist.slice(-10).map(h => h.pos).join(" → ");
-      const formGWs = hist.slice(-5);
-      const formPts = formGWs.map(h => h.pos);
-      const formTrend = formPts.length >= 2 ? (formPts[formPts.length - 1] < formPts[0] ? "↑" : formPts[formPts.length - 1] > formPts[0] ? "↓" : "→") : "";
-
-      marker.bindPopup(`
-        <div style="min-width:180px">
+      const basicPopup = `
+        <div style="min-width:180px" id="popup-${tid}">
           <div style="font-weight:700;color:${teamColor};font-size:1.1rem">${t.name}</div>
           <div style="font-size:0.85rem;color:#888;margin-bottom:6px">${t.stadiumName} · ${REGIONS[t.region]?.name || t.region}</div>
           <div style="display:flex;gap:8px;align-items:center;margin:6px 0">
             <div style="background:${teamColor};color:#fff;font-weight:700;font-size:1.2rem;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center">${pos}</div>
             <div>
-              <div style="font-weight:600">${lang === "pl" ? "Pozycja" : "Position"} <span style="color:${trendColor};font-weight:700">${pos}/20 ${trend}</span></div>
-              <div style="color:var(--text-dim);font-size:0.8rem">${st?.p || 0} ${lang === "pl" ? "meków" : "games"} · ${st?.pts || 0} ${lang === "pl" ? "pkt" : "pts"}</div>
+              <div style="font-weight:600">${lang === "pl" ? "Pozycja" : "Position"} <span style="color:${trend === '+' ? 'var(--green)' : trend === '-' ? 'var(--red)' : 'var(--text-dim)'};font-weight:700">${pos}/20 ${trend}</span></div>
+              <div style="color:#aaa;font-size:0.8rem">${st?.p || 0} ${lang === "pl" ? "meków" : "games"} · ${st?.pts || 0} ${lang === "pl" ? "pkt" : "pts"}</div>
             </div>
           </div>
           <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;text-align:center;margin:8px 0;font-size:0.8rem">
-            <div><div style="color:var(--green);font-weight:700">${st?.w || 0}</div><div style="color:var(--text-dim)">${lang === "pl" ? "W" : "W"}</div></div>
-            <div><div style="color:var(--yellow);font-weight:700">${st?.d || 0}</div><div style="color:var(--text-dim)">${lang === "pl" ? "R" : "D"}</div></div>
-            <div><div style="color:var(--red);font-weight:700">${st?.l || 0}</div><div style="color:var(--text-dim)">${lang === "pl" ? "P" : "L"}</div></div>
-            <div><div style="font-weight:700">${st?.gf || 0}:${st?.ga || 0}</div><div style="color:var(--text-dim)">GD ${st?.gd > 0 ? "+" : ""}${st?.gd || 0}</div></div>
+            <div><div style="color:#22c55e;font-weight:700">${st?.w || 0}</div><div style="color:#aaa">${lang === "pl" ? "W" : "W"}</div></div>
+            <div><div style="color:#f59e0b;font-weight:700">${st?.d || 0}</div><div style="color:#aaa">${lang === "pl" ? "R" : "D"}</div></div>
+            <div><div style="color:#ef4444;font-weight:700">${st?.l || 0}</div><div style="color:#aaa">${lang === "pl" ? "P" : "L"}</div></div>
+            <div><div style="font-weight:700">${st?.gf || 0}:${st?.ga || 0}</div><div style="color:#aaa">GD ${st?.gd > 0 ? "+" : ""}${st?.gd || 0}</div></div>
           </div>
-          ${hist.length > 0 ? `<div style="border-top:1px solid #333;padding-top:6px;margin-top:6px">
-            <div style="font-size:0.8rem;color:#aaa;margin-bottom:3px">${lang === "pl" ? "Pozycja w sezonie" : "Season position"} ${formTrend}</div>
-            <div style="font-size:0.75rem;color:#888">${posTrend}</div>
-          </div>` : ""}
-        </div>
-      `);
+          <div class="stadium-popup-toggle" data-tid="${tid}" data-team-color="${teamColor}" data-team-name="${t.name}" style="text-align:center;padding:6px;margin-top:4px;border-top:1px solid #333;cursor:pointer;color:${teamColor};font-size:0.8rem;font-weight:600">
+            ${lang === "pl" ? "Pokaż historię i sezony" : "Show history & seasons"}
+          </div>
+        </div>`;
 
-      // Add position badge as HTML overlay near marker
+      marker.bindPopup(basicPopup, { maxWidth: 280 });
+
       const badgeIcon = L.divIcon({
         className: "",
         html: posBadge,
@@ -2906,6 +2905,71 @@ function renderStadiumsMap() {
       });
       L.marker(t.stadium, { icon: badgeIcon, interactive: false }).addTo(map);
     }
+
+    // Event delegation for popup toggle buttons
+    map.on("popupopen", (e) => {
+      const toggleBtn = e.popup.getElement()?.querySelector(".stadium-popup-toggle");
+      if (!toggleBtn) return;
+      toggleBtn.addEventListener("click", async () => {
+        const tid = parseInt(toggleBtn.dataset.tid);
+        const teamColor = toggleBtn.dataset.teamColor;
+        const teamName = toggleBtn.dataset.teamName;
+        const popupEl = toggleBtn.closest("div");
+        if (!popupEl) return;
+
+        toggleBtn.textContent = lang === "pl" ? "Ładowanie..." : "Loading...";
+        toggleBtn.style.pointerEvents = "none";
+
+        try {
+          const seasonResults = [];
+          const teamFullName = bootstrapData.teams.find(t => t.id === tid)?.name || "";
+          for (const season of seasons) {
+            try {
+              const rows = await fetchVaastavGW(season, "38");
+              if (!rows || !rows.length) continue;
+              const teamPlayers = rows.filter(r => r.team === teamFullName);
+              if (teamPlayers.length > 0) {
+                const totalPts = teamPlayers.reduce((s, r) => s + (parseInt(r.total_points) || 0), 0);
+                seasonResults.push({ season: seasonNames[season], pts: totalPts });
+              }
+            } catch {}
+          }
+
+          // Position history text
+          const posTrend = hist.slice(-10).map(h => "GW" + h.gw + ":" + h.pos).join(", ");
+          const formGWs = hist.slice(-5);
+          const formPts = formGWs.map(h => h.pos);
+          const formTrend = formPts.length >= 2 ? (formPts[formPts.length - 1] < formPts[0] ? "+" : formPts[formPts.length - 1] > formPts[0] ? "-" : "=") : "";
+
+          let detailHTML = "";
+
+          if (hist.length > 0) {
+            detailHTML += `<div style="border-top:1px solid #333;padding-top:6px;margin-top:6px">
+              <div style="font-size:0.8rem;color:#aaa;margin-bottom:4px">${lang === "pl" ? "Pozycja w sezonie" : "Season position"} <span style="color:${formTrend === '+' ? '#22c55e' : formTrend === '-' ? '#ef4444' : '#aaa'};font-weight:700">${formTrend === '+' ? 'up' : formTrend === '-' ? 'down' : 'stable'}</span></div>
+              <div style="font-size:0.7rem;color:#666;line-height:1.4">${posTrend || "-"}</div>
+            </div>`;
+          }
+
+          if (seasonResults.length > 0) {
+            detailHTML += `<div style="border-top:1px solid #333;padding-top:6px;margin-top:6px">
+              <div style="font-size:0.8rem;color:#aaa;margin-bottom:4px">${lang === "pl" ? "Poprzednie sezony (suma pkt)" : "Previous seasons (total pts)"}</div>
+              ${seasonResults.map(s => `<div style="display:flex;justify-content:space-between;font-size:0.75rem;color:#ccc;padding:2px 0">
+                <span>${s.season}</span><span style="font-weight:700;color:${teamColor}">${s.pts} pkt</span>
+              </div>`).join("")}
+            </div>`;
+          } else {
+            detailHTML += `<div style="border-top:1px solid #333;padding-top:6px;margin-top:6px;font-size:0.75rem;color:#666">
+              ${lang === "pl" ? "Brak danych historycznych" : "No historical data"}
+            </div>`;
+          }
+
+          popupEl.insertAdjacentHTML("beforeend", detailHTML);
+          toggleBtn.style.display = "none";
+        } catch(err) {
+          toggleBtn.textContent = lang === "pl" ? "Błąd" : "Error";
+        }
+      });
+    });
 
     const regionLegend = Object.entries(regionColors).map(([k, c]) =>
       `<span style="display:inline-flex;align-items:center;gap:4px;font-size:0.8rem"><span style="width:10px;height:10px;border-radius:50%;background:${c};display:inline-block"></span>${REGIONS[k]?.name || k}</span>`
