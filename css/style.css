@@ -770,6 +770,37 @@ td {
   color: var(--text);
 }
 
+/* Leader cards */
+.ketchup-leaders {
+  margin-bottom: 16px;
+}
+
+.leader-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.leader-card h3 {
+  font-size: 0.95rem;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.leader-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.88rem;
+}
+
+.leader-row:last-child {
+  border-bottom: none;
+}
+
 /* Top15 chart */
 .top15-chart {
   overflow-x: auto;

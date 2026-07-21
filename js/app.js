@@ -1,4 +1,4 @@
-import { getBootstrapStatic, getPlayerSummary, getManagerPicks, getLeagueStandings, getFixtures, fetchVaastavGW } from "./api.js";
+import { getBootstrapStatic, getPlayerSummary, getManagerPicks, getLeagueStandings, getFixtures, fetchVaastavGW, fetchFPL } from "./api.js";
 import { t, setLang, getLang } from "./i18n.js";
 import { TEAM_COORDS, REGIONS, travelDistance } from "./stadiums.js";
 
@@ -202,8 +202,8 @@ function updateOptimizerSlider() {
   const sliderMin = Math.ceil((minCost + 10) / 5) * 5;
   const slider = document.getElementById("optimizer-budget");
   if (slider) {
-    slider.min = sliderMin;
-    slider.max = 1000;
+    slider.min = Math.max(sliderMin, 550);
+    slider.max = 1200;
     slider.value = 1000;
     document.getElementById("optimizer-budget-display").textContent = "100.0";
   }
@@ -288,6 +288,50 @@ function populateKetchupPlayers() {
       pos: getPositionShort(p.element_type),
       pts: p.total_points,
     }));
+  renderKetchupLeaders();
+}
+
+function renderKetchupLeaders() {
+  if (!bootstrapData) return;
+  const lang = getLang();
+  const el = document.getElementById("ketchup-leaders");
+  if (!el) return;
+
+  const players = bootstrapData.elements.filter((p) => p.minutes > 0 && p.total_points > 0);
+  const scored = players.map((p) => {
+    const xGI = (parseFloat(p.expected_goals) || 0) + (parseFloat(p.expected_assists) || 0);
+    const xPts = xGI * 4;
+    const diff = p.total_points - xPts;
+    return { ...p, xPts, diff };
+  });
+
+  const underrated = [...scored].sort((a, b) => b.diff - a.diff).slice(0, 5);
+  const overrated = [...scored].sort((a, b) => a.diff - b.diff).slice(0, 5);
+
+  const renderCard = (title, color, icon, list) => {
+    const rows = list.map((p, i) => {
+      const teamColor = TEAM_COLORS[p.team] || "#555";
+      return `<div class="leader-row">
+        <span class="rank-num" style="min-width:20px;color:${color}">${i + 1}</span>
+        <span class="team-color" style="background:${teamColor}"></span>
+        <span style="font-weight:600">${p.web_name}</span>
+        <span style="color:var(--text-dim);font-size:0.82rem">${getTeamName(p.team)} ${getPositionShort(p.element_type)}</span>
+        <span style="margin-left:auto;font-weight:700;color:${color}">${p.diff >= 0 ? '+' : ''}${p.diff.toFixed(1)}</span>
+      </div>`;
+    }).join("");
+    return `<div class="leader-card">
+      <h3 style="color:${color}">${icon} ${title}</h3>
+      ${rows}
+    </div>`;
+  };
+
+  const uTitle = lang === "pl" ? "Niedoszacowani (grają ponad xP)" : "Underrated (overperforming xP)";
+  const oTitle = lang === "pl" ? "Przeszacowani (grają poniżej xP)" : "Overrated (underperforming xP)";
+
+  el.innerHTML = `<div class="charts-row">
+    ${renderCard(uTitle, "var(--green)", "📈", underrated)}
+    ${renderCard(oTitle, "var(--red)", "📉", overrated)}
+  </div>`;
 }
 
 function initKetchupSearch() {
@@ -578,38 +622,54 @@ function runOptimizer() {
 
 function solveOptimizerFull(budget, allPlayers, maxPerTeam, limits) {
   const byPos = { 1: [], 2: [], 3: [], 4: [] };
-  for (const p of allPlayers) byPos[p.element_type]?.push(p);
+  for (const p of allPlayers) {
+    if (p.element_type in byPos) byPos[p.element_type].push(p);
+  }
+
+  for (const pos of Object.keys(byPos)) {
+    byPos[pos].sort((a, b) => b.total_points - a.total_points);
+  }
 
   const squad = [];
   const teamCount = {};
   const totalSlots = Object.values(limits).reduce((a, b) => a + b, 0);
 
-  // Phase 1: greedy by total_points, respecting budget
-  for (const pos of [1, 2, 3, 4]) {
-    const candidates = byPos[pos]
-      .filter((p) => p.now_cost > 0 && p.total_points > 0)
-      .sort((a, b) => b.total_points - a.total_points);
+  function cheapestInPos(pos, count) {
+    const avail = byPos[pos].filter((p) => p.now_cost > 0 && !squad.find((s) => s.id === p.id) && (teamCount[p.team] || 0) < maxPerTeam);
+    avail.sort((a, b) => a.now_cost - b.now_cost);
+    return avail.slice(0, count).reduce((s, p) => s + p.now_cost, 0);
+  }
 
+  const posOrder = [2, 3, 4, 1];
+  for (const pos of posOrder) {
+    const need = limits[pos];
+    let remainingAfter = 0;
+    for (const otherPos of posOrder) {
+      if (otherPos === pos) continue;
+      remainingAfter += limits[otherPos] - squad.filter((s) => s.element_type === otherPos).length;
+    }
+    const minNeededForRest = cheapestInPos(posOrder.find((p) => p !== pos && squad.filter((s) => s.element_type === p).length < limits[p]) || pos, remainingAfter);
+
+    const candidates = byPos[pos].filter((p) => p.now_cost > 0 && p.total_points > 0);
     let picked = 0;
     for (const p of candidates) {
-      if (picked >= limits[pos]) break;
+      if (picked >= need) break;
       if (squad.find((s) => s.id === p.id)) continue;
       if ((teamCount[p.team] || 0) >= maxPerTeam) continue;
       const curCost = squad.reduce((s, x) => s + x.now_cost, 0);
-      if (curCost + p.now_cost > budget) continue;
+      if (curCost + p.now_cost > budget - minNeededForRest) continue;
       squad.push({ ...p });
       teamCount[p.team] = (teamCount[p.team] || 0) + 1;
       picked++;
     }
   }
 
-  // Phase 2: fill any unfilled slots with cheapest available
   for (const pos of [1, 2, 3, 4]) {
     const filled = squad.filter((s) => s.element_type === pos).length;
     if (filled >= limits[pos]) continue;
     const need = limits[pos] - filled;
     const cheapest = byPos[pos]
-      .filter((p) => p.now_cost > 0 && p.total_points > 0 && !squad.find((s) => s.id === p.id) && (teamCount[p.team] || 0) < maxPerTeam)
+      .filter((p) => p.now_cost > 0 && !squad.find((s) => s.id === p.id) && (teamCount[p.team] || 0) < maxPerTeam)
       .sort((a, b) => a.now_cost - b.now_cost);
     let picked = 0;
     for (const p of cheapest) {
@@ -622,10 +682,8 @@ function solveOptimizerFull(budget, allPlayers, maxPerTeam, limits) {
     }
   }
 
-  // Check if we got all 15
   const success = squad.length === totalSlots;
 
-  // Phase 3: upgrade — try to swap each slot for a better player within budget
   let totalCost = squad.reduce((s, p) => s + p.now_cost, 0);
   if (success) {
     let improved = true;
@@ -637,7 +695,6 @@ function solveOptimizerFull(budget, allPlayers, maxPerTeam, limits) {
         const candidates = byPos[pos]
           .filter((p) => p.id !== cur.id && p.total_points > cur.total_points && !squad.find((s) => s.id === p.id))
           .sort((a, b) => b.total_points - a.total_points);
-
         for (const candidate of candidates) {
           const costDiff = candidate.now_cost - cur.now_cost;
           if (costDiff > (budget - totalCost)) continue;
@@ -759,7 +816,7 @@ function renderBudgetSensitivityChart() {
   const container = document.getElementById("optimizer-chart-budget");
   if (!container || !bootstrapData) return;
 
-  const budgets = [65, 70, 75, 80, 85, 90, 95, 100];
+  const budgets = [55, 60, 70, 80, 90, 100, 110, 120];
   const results = [];
 
   for (const b of budgets) {
@@ -905,6 +962,44 @@ function renderHomeAway() {
       <td class="stat-val" style="color:${r.diff > 0 ? 'var(--green)' : 'var(--red)'}">${r.diff > 0 ? '+' : ''}${r.diff}</td>
     </tr>`;
   }).join("");
+
+  renderHomeAwayLeaders();
+}
+
+function renderHomeAwayLeaders() {
+  if (!homeAwayData.length) return;
+  const lang = getLang();
+  const el = document.getElementById("homeaway-leaders");
+  if (!el) return;
+
+  const valid = homeAwayData.filter(p => p.homeGames >= 3 && p.awayGames >= 3);
+  const bestHome = [...valid].sort((a, b) => b.homeAvg - a.homeAvg).slice(0, 5);
+  const bestAway = [...valid].sort((a, b) => b.awayAvg - a.awayAvg).slice(0, 5);
+
+  const renderCard = (title, color, icon, list, field) => {
+    const rows = list.map((p, i) => {
+      const teamColor = TEAM_COLORS[p.team] || "#555";
+      return `<div class="leader-row">
+        <span class="rank-num" style="min-width:20px;color:${color}">${i + 1}</span>
+        <span class="team-color" style="background:${teamColor}"></span>
+        <span style="font-weight:600">${p.web_name}</span>
+        <span style="color:var(--text-dim);font-size:0.82rem">${getTeamName(p.team)} ${getPositionShort(p.element_type)}</span>
+        <span style="margin-left:auto;font-weight:700;color:${color}">${p[field]} <span style="font-size:0.75rem;color:var(--text-dim)">(${p[field === 'homeAvg' ? 'homeGames' : 'awayGames']}g)</span></span>
+      </div>`;
+    }).join("");
+    return `<div class="leader-card">
+      <h3 style="color:${color}">${icon} ${title}</h3>
+      ${rows}
+    </div>`;
+  };
+
+  const hTitle = lang === "pl" ? "Królowie Domu (najlepsza średnia)" : "Home Kings (highest avg)";
+  const aTitle = lang === "pl" ? "Specjaliści od Wyjazdów (najlepsza średnia)" : "Away Experts (highest avg)";
+
+  el.innerHTML = `<div class="charts-row">
+    ${renderCard(hTitle, "var(--green)", "🏠", bestHome, "homeAvg")}
+    ${renderCard(aTitle, "var(--red)", "✈️", bestAway, "awayAvg")}
+  </div>`;
 }
 
 // ===================== MY TEAM =====================
@@ -1540,105 +1635,151 @@ function renderTop15Charts() {
   const gws = Object.keys(top15AllData).map(Number).sort((a, b) => a - b);
   if (gws.length === 0) return;
 
-  const metric = top15Tab === "points" ? "points" : "selected";
-
-  const playerStats = {};
-  for (const gw of gws) {
-    const sorted = [...(top15AllData[gw] || [])].sort((a, b) => b[metric] - a[metric]).slice(0, 15);
-    for (const p of sorted) {
-      if (!playerStats[p.name]) playerStats[p.name] = { name: p.name, team: p.team, position: p.position, appearances: 0, totalMetric: 0 };
-      playerStats[p.name].appearances++;
-      playerStats[p.name].totalMetric += p[metric];
-    }
-  }
-
-  const players = Object.values(playerStats).sort((a, b) => b.appearances - a.appearances || b.totalMetric - a.totalMetric);
-  const colors = ["#3b82f6","#ef4444","#22c55e","#eab308","#a855f7","#f97316","#06b6d4","#ec4899","#84cc16","#f43f5e","#6366f1","#14b8a6","#e879f9","#fb923c","#34d399"];
-
   const svgW = 900, svgH = 420;
   const pad = { top: 30, right: 20, bottom: 60, left: 60 };
   const chartW = svgW - pad.left - pad.right;
   const chartH = svgH - pad.top - pad.bottom;
+  const colors = ["#3b82f6","#ef4444","#22c55e","#eab308","#a855f7","#f97316","#06b6d4","#ec4899","#84cc16","#f43f5e","#6366f1","#14b8a6","#e879f9","#fb923c","#34d399"];
 
-  const xStep = gws.length > 1 ? chartW / (gws.length - 1) : chartW;
-
-  const topPlayers = players.slice(0, Math.min(players.length, 20));
-
-  const playerGWValues = {};
-  for (const p of topPlayers) playerGWValues[p.name] = [];
-  for (const gw of gws) {
-    const sorted = [...(top15AllData[gw] || [])].sort((a, b) => b[metric] - a[metric]).slice(0, 15);
-    const inGW = {};
-    for (const p of sorted) inGW[p.name] = p[metric];
-    for (const p of topPlayers) {
-      playerGWValues[p.name].push(inGW[p.name] || 0);
+  if (top15Tab === "points") {
+    const playerPts = {};
+    for (const gw of gws) {
+      const sorted = [...(top15AllData[gw] || [])].sort((a, b) => b.points - a.points).slice(0, 15);
+      for (const p of sorted) {
+        if (!playerPts[p.name]) playerPts[p.name] = { name: p.name, team: p.team, position: p.position, gwPts: {} };
+        playerPts[p.name].gwPts[gw] = p.points;
+      }
     }
-  }
+    const players = Object.values(playerPts).map(p => {
+      const cumulative = [];
+      let sum = 0;
+      for (const gw of gws) {
+        const pts = p.gwPts[gw] || 0;
+        sum += pts;
+        cumulative.push(sum);
+      }
+      return { ...p, cumulative, total: sum };
+    }).sort((a, b) => b.total - a.total).slice(0, 15);
 
-  let cumulative = new Array(gws.length).fill(0);
-  let layers = "";
+    const maxVal = Math.max(...players.map(p => Math.max(...p.cumulative)), 1);
+    let paths = "", xTicks = "", yTicks = "";
+    const xStep = gws.length > 1 ? chartW / (gws.length - 1) : chartW;
 
-  for (let pi = topPlayers.length - 1; pi >= 0; pi--) {
-    const p = topPlayers[pi];
-    const color = colors[pi % colors.length];
-    const vals = playerGWValues[p.name];
-    const lower = [...cumulative];
+    for (let i = 0; i <= 5; i++) {
+      const val = (maxVal / 5) * i;
+      const y = pad.top + chartH - (chartH / 5) * i;
+      yTicks += `<text class="chart-label" x="${pad.left - 6}" y="${y + 3}" text-anchor="end" font-size="10">${Math.round(val)}</text>`;
+      if (i > 0) yTicks += `<line class="chart-grid" x1="${pad.left}" y1="${y}" x2="${pad.left + chartW}" y2="${y}"/>`;
+    }
 
-    const newCum = cumulative.map((c, i) => c + vals[i]);
-    let pathD = "";
-    pathD += `M ${pad.left} ${pad.top + chartH - (lower[0] / 1) * chartH}`;
-    for (let i = 0; i < gws.length; i++) {
+    const xLabelStep = Math.max(1, Math.floor(gws.length / 15));
+    for (let i = 0; i < gws.length; i += xLabelStep) {
       const x = pad.left + (gws.length > 1 ? (i / (gws.length - 1)) * chartW : chartW / 2);
-      pathD += ` L ${x} ${pad.top + chartH - (newCum[i] / 1) * chartH}`;
+      xTicks += `<text class="chart-label" x="${x}" y="${svgH - pad.bottom + 18}" text-anchor="middle" font-size="10">GW${gws[i]}</text>`;
     }
-    for (let i = gws.length - 1; i >= 0; i--) {
+
+    players.forEach((p, pi) => {
+      const color = colors[pi % colors.length];
+      let d = "";
+      for (let i = 0; i < gws.length; i++) {
+        const x = pad.left + (gws.length > 1 ? (i / (gws.length - 1)) * chartW : chartW / 2);
+        const y = pad.top + chartH - (p.cumulative[i] / maxVal) * chartH;
+        d += (i === 0 ? "M" : "L") + ` ${x} ${y}`;
+      }
+      paths += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2"><title>${p.name} (${p.total} ${lang === "pl" ? " pkt" : " pts"})</title></path>`;
+      const lastX = pad.left + (gws.length > 1 ? chartW : chartW / 2);
+      const lastY = pad.top + chartH - (p.cumulative[gws.length - 1] / maxVal) * chartH;
+      paths += `<circle cx="${lastX}" cy="${lastY}" r="3" fill="${color}"/>`;
+    });
+
+    let legend = `<g transform="translate(${pad.left}, 8)">`;
+    players.forEach((p, i) => {
+      const lx = i * 60;
+      legend += `<rect x="${lx}" y="0" width="10" height="10" fill="${colors[i % colors.length]}" rx="2"/>`;
+      legend += `<text x="${lx + 14}" y="9" font-size="8" fill="var(--text-dim)" font-family="sans-serif">${p.name}</text>`;
+    });
+    legend += `</g>`;
+
+    container.innerHTML = `
+      <h3 class="chart-title" style="margin-bottom:8px">${lang === "pl" ? "Kumulatywne punkty – Top 15 strzelców" : "Cumulative Points – Top 15 Scorers"}</h3>
+      <svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg">
+        <line class="chart-axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + chartH}"/>
+        <line class="chart-axis" x1="${pad.left}" y1="${pad.top + chartH}" x2="${pad.left + chartW}" y2="${pad.top + chartH}"/>
+        ${yTicks}${xTicks}${paths}${legend}
+      </svg>`;
+
+  } else {
+    const playerOwn = {};
+    for (const gw of gws) {
+      const sorted = [...(top15AllData[gw] || [])].sort((a, b) => b.selected - a.selected).slice(0, 15);
+      for (const p of sorted) {
+        if (!playerOwn[p.name]) playerOwn[p.name] = { name: p.name, team: p.team, position: p.position, gwOwn: {} };
+        playerOwn[p.name].gwOwn[gw] = p.selected;
+      }
+    }
+    const players = Object.values(playerOwn).map(p => {
+      let sum = 0, count = 0;
+      for (const gw of gws) {
+        if (p.gwOwn[gw] !== undefined) { sum += p.gwOwn[gw]; count++; }
+      }
+      const avgOwn = count > 0 ? sum / count : 0;
+      return { ...p, avgOwn, totalAppearances: count };
+    }).sort((a, b) => b.avgOwn - a.avgOwn).slice(0, 15);
+
+    const maxVal = 100;
+    let paths = "", xTicks = "", yTicks = "";
+    const xStep = gws.length > 1 ? chartW / (gws.length - 1) : chartW;
+
+    for (let i = 0; i <= 5; i++) {
+      const val = (maxVal / 5) * i;
+      const y = pad.top + chartH - (chartH / 5) * i;
+      yTicks += `<text class="chart-label" x="${pad.left - 6}" y="${y + 3}" text-anchor="end" font-size="10">${val.toFixed(0)}%</text>`;
+      if (i > 0) yTicks += `<line class="chart-grid" x1="${pad.left}" y1="${y}" x2="${pad.left + chartW}" y2="${y}"/>`;
+    }
+
+    const xLabelStep = Math.max(1, Math.floor(gws.length / 15));
+    for (let i = 0; i < gws.length; i += xLabelStep) {
       const x = pad.left + (gws.length > 1 ? (i / (gws.length - 1)) * chartW : chartW / 2);
-      pathD += ` L ${x} ${pad.top + chartH - (lower[i] / 1) * chartH}`;
+      xTicks += `<text class="chart-label" x="${x}" y="${svgH - pad.bottom + 18}" text-anchor="middle" font-size="10">GW${gws[i]}</text>`;
     }
-    pathD += " Z";
 
-    layers += `<path d="${pathD}" fill="${color}" opacity="0.75"><title>${p.name} (${p.appearances} ${lang === "pl" ? "kolejek" : "GWs"})</title></path>`;
+    players.forEach((p, pi) => {
+      const color = colors[pi % colors.length];
+      let d = "";
+      for (let i = 0; i < gws.length; i++) {
+        const x = pad.left + (gws.length > 1 ? (i / (gws.length - 1)) * chartW : chartW / 2);
+        const ownVal = p.gwOwn[gws[i]];
+        const y = ownVal !== undefined
+          ? pad.top + chartH - (ownVal / maxVal) * chartH
+          : null;
+        if (y !== null) d += (d === "" ? "M" : "L") + ` ${x} ${y}`;
+      }
+      if (d) paths += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2"><title>${p.name} (avg: ${p.avgOwn.toFixed(1)}%)</title></path>`;
+      const lastGW = gws[gws.length - 1];
+      const lastOwn = p.gwOwn[lastGW];
+      if (lastOwn !== undefined) {
+        const lastX = pad.left + (gws.length > 1 ? chartW : chartW / 2);
+        const lastY = pad.top + chartH - (lastOwn / maxVal) * chartH;
+        paths += `<circle cx="${lastX}" cy="${lastY}" r="3" fill="${color}"/>`;
+      }
+    });
 
-    cumulative = newCum;
+    let legend = `<g transform="translate(${pad.left}, 8)">`;
+    players.forEach((p, i) => {
+      const lx = i * 60;
+      legend += `<rect x="${lx}" y="0" width="10" height="10" fill="${colors[i % colors.length]}" rx="2"/>`;
+      legend += `<text x="${lx + 14}" y="9" font-size="8" fill="var(--text-dim)" font-family="sans-serif">${p.name}</text>`;
+    });
+    legend += `</g>`;
+
+    container.innerHTML = `
+      <h3 class="chart-title" style="margin-bottom:8px">${lang === "pl" ? "Posiadanie Top 15 – % menedżerów" : "Ownership % – Top 15 Most-Owned"}</h3>
+      <svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg">
+        <line class="chart-axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + chartH}"/>
+        <line class="chart-axis" x1="${pad.left}" y1="${pad.top + chartH}" x2="${pad.left + chartW}" y2="${pad.top + chartH}"/>
+        ${yTicks}${xTicks}${paths}${legend}
+      </svg>`;
   }
-
-  const maxVal = Math.max(...cumulative, 1);
-  let yTicks = "";
-  const steps = 5;
-  for (let i = 0; i <= steps; i++) {
-    const val = (maxVal / steps) * i;
-    const y = pad.top + chartH - (chartH / steps) * i;
-    yTicks += `<text class="chart-label" x="${pad.left - 6}" y="${y + 3}" text-anchor="end" font-size="10">${Math.round(val)}</text>`;
-    if (i > 0) yTicks += `<line class="chart-grid" x1="${pad.left}" y1="${y}" x2="${pad.left + chartW}" y2="${y}"/>`;
-  }
-
-  let xTicks = "";
-  const xLabelStep = Math.max(1, Math.floor(gws.length / 15));
-  for (let i = 0; i < gws.length; i += xLabelStep) {
-    const x = pad.left + (gws.length > 1 ? (i / (gws.length - 1)) * chartW : chartW / 2);
-    xTicks += `<text class="chart-label" x="${x}" y="${svgH - pad.bottom + 18}" text-anchor="middle" font-size="10">GW${gws[i]}</text>`;
-  }
-
-  let legend = `<g transform="translate(${pad.left}, 8)">`;
-  topPlayers.slice(0, 12).forEach((p, i) => {
-    const lx = i * 70;
-    const color = colors[i % colors.length];
-    legend += `<rect x="${lx}" y="0" width="10" height="10" fill="${color}" rx="2"/>`;
-    legend += `<text x="${lx + 14}" y="9" font-size="8" fill="var(--text-dim)" font-family="sans-serif">${p.name}</text>`;
-  });
-  legend += `</g>`;
-
-  const chartTitle = top15Tab === "points"
-    ? (lang === "pl" ? "Suma pkt Top 15 w kolejce" : "Top 15 total pts per GW")
-    : (lang === "pl" ? "Suma posiadania Top 15" : "Top 15 total ownership per GW");
-
-  container.innerHTML = `
-    <h3 class="chart-title" style="margin-bottom:8px">${chartTitle}</h3>
-    <svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg">
-      <line class="chart-axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + chartH}"/>
-      <line class="chart-axis" x1="${pad.left}" y1="${pad.top + chartH}" x2="${pad.left + chartW}" y2="${pad.top + chartH}"/>
-      ${yTicks}${xTicks}${layers}${legend}
-    </svg>`;
 
   document.getElementById("top15-chart-wrap").style.display = "";
 }
@@ -2081,9 +2222,11 @@ function renderStadiums() {
 function renderStadiumsMap() {
   const container = document.getElementById("stadiums-map");
   if (!container) return;
+  if (typeof L === "undefined") return;
 
-  if (squadMap) { squadMap.remove(); squadMap = null; }
+  if (window._stadiumsMap) { window._stadiumsMap.remove(); window._stadiumsMap = null; }
   const map = L.map(container, { scrollWheelZoom: true }).setView([53.0, -1.5], 6);
+  window._stadiumsMap = map;
   L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
     maxZoom: 18,
@@ -2108,7 +2251,56 @@ function renderStadiumsMap() {
   legendDiv.innerHTML = `<div style="padding:8px 12px;background:#1a1d27ee;border-radius:6px;position:absolute;bottom:20px;left:20px;z-index:1000;display:flex;gap:12px;flex-wrap:wrap">${regionLegend}</div>`;
   container.appendChild(legendDiv);
 
-  setTimeout(() => map.invalidateSize(), 100);
+  setTimeout(() => { if (window._stadiumsMap) window._stadiumsMap.invalidateSize(); }, 200);
+  setTimeout(() => { if (window._stadiumsMap) window._stadiumsMap.invalidateSize(); }, 500);
+  loadStadiumsFixtures(map);
+}
+
+async function loadStadiumsFixtures(map) {
+  if (!bootstrapData) return;
+  const lang = getLang();
+  const events = bootstrapData.events || [];
+  const finished = events.filter(e => e.finished);
+  if (finished.length === 0) return;
+  const lastGW = finished[finished.length - 1].id;
+
+  try {
+    const fixtures = await fetchFPL(`fixtures/?event=${lastGW}`);
+    if (!fixtures || !fixtures.length) return;
+
+    const teamIdToCoord = {};
+    for (const [id, t] of Object.entries(TEAM_COORDS)) {
+      teamIdToCoord[parseInt(id)] = t.stadium;
+    }
+
+    const fixtureLayer = L.layerGroup().addTo(map);
+    for (const f of fixtures) {
+      const homeCoord = teamIdToCoord[f.team_h];
+      const awayCoord = teamIdToCoord[f.team_a];
+      if (!homeCoord || !awayCoord) continue;
+      const homeTeam = bootstrapData.teams.find(t => t.id === f.team_h);
+      const awayTeam = bootstrapData.teams.find(t => t.id === f.team_a);
+      const hs = f.team_h_score ?? "?";
+      const as = f.team_a_score ?? "?";
+      const line = L.polyline([homeCoord, awayCoord], { color: "#ffffff44", weight: 1, dashArray: "6 4" }).addTo(fixtureLayer);
+      const midLat = (homeCoord[0] + awayCoord[0]) / 2;
+      const midLng = (homeCoord[1] + awayCoord[1]) / 2;
+      L.marker([midLat, midLng], {
+        icon: L.divIcon({ className: "", html: `<div style="font-size:10px;font-weight:700;color:#fff;background:#1a1d27cc;padding:1px 5px;border-radius:3px;white-space:nowrap">${homeTeam?.short_name || "?"} ${hs} - ${as} ${awayTeam?.short_name || "?"}</div>`, iconSize: [0, 0] })
+      }).addTo(fixtureLayer);
+    }
+
+    const fixtureBtn = document.createElement("div");
+    fixtureBtn.innerHTML = `<div style="padding:6px 12px;background:#1a1d27ee;border-radius:6px;position:absolute;top:10px;left:10px;z-index:1000;font-size:0.8rem;color:#aaa">${lang === "pl" ? "Mecze GW" + lastGW : "Fixtures GW" + lastGW} <button id="stadiums-toggle-fixtures" style="margin-left:6px;background:none;border:1px solid #555;color:#fff;border-radius:3px;padding:1px 6px;cursor:pointer;font-size:0.75rem">${lang === "pl" ? "Ukryj" : "Hide"}</button></div>`;
+    container.appendChild(fixtureBtn);
+    setTimeout(() => {
+      const toggleBtn = document.getElementById("stadiums-toggle-fixtures");
+      if (toggleBtn) toggleBtn.addEventListener("click", () => {
+        if (map.hasLayer(fixtureLayer)) { map.removeLayer(fixtureLayer); toggleBtn.textContent = lang === "pl" ? "Pokaż" : "Show"; }
+        else { map.addLayer(fixtureLayer); toggleBtn.textContent = lang === "pl" ? "Ukryj" : "Hide"; }
+      });
+    }, 100);
+  } catch {}
 }
 
 function renderStadiumsRegions() {
@@ -2323,6 +2515,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initTableSort("optimizer-table", optimizerSort, renderOptimizer, ["web_name", "now_cost", "total_points"]);
   initTableSort("homeaway-table", homeAwaySort, renderHomeAway, ["homeAvg", "awayAvg", "diff"]);
   initTableSort("nastart-table", naStartSort, renderNaStart, ["web_name", "team", "element_type", "now_cost", "total_points", "ptsPerCost"]);
+  initTableSort("squadbuilder-table", squadBuilderSort, renderSquadBuilder, ["web_name", "now_cost", "total_points", "avgAwayDist", "compositeScore"]);
   initOptimizer();
   initKetchup();
   initHomeAway();

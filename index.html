@@ -72,6 +72,8 @@
       <h1 class="page-title" data-i18n="ketchup.title">Forma vs Oczekiwania</h1>
       <p class="page-desc" data-i18n="ketchup.description">Kto gra ponad/poniżej oczekiwań? Porównanie rzeczywistych punktów z oczekiwanymi (xG + xA) <span class="info-icon" data-i18n-text="ketchup.info">i</span></p>
 
+      <div id="ketchup-leaders" class="ketchup-leaders"></div>
+
       <div class="card" id="ketchup-controls">
         <div class="form-row">
           <div class="form-group" style="flex:1;min-width:200px">
@@ -114,7 +116,7 @@
         <div class="form-row">
           <div class="form-group">
             <label data-i18n="optimizer.budget">Budżet</label>
-            <input type="range" id="optimizer-budget" min="650" max="1000" value="1000" step="5">
+            <input type="range" id="optimizer-budget" min="550" max="1200" value="1000" step="5">
           </div>
           <span id="optimizer-budget-display" class="stat-val">100.0</span>
           <button class="btn" id="optimizer-run" data-i18n="optimizer.calculate">Oblicz</button>
@@ -157,7 +159,9 @@
     <!-- HOME/AWAY -->
     <div class="page" id="page-homeaway">
       <h1 class="page-title" data-i18n="homeAway.title">Dom / Wyjazd</h1>
-      <p class="page-desc" data-i18n="homeAway.description">Średnia punktów na mecz domowy vs wyjazdowy (top 40 zawodników wg sumy pkt) <span class="info-icon" data-i18n-text="homeAway.info">i</span></p>
+      <p class="page-desc" data-i18n="homeAway.description">Porównanie punktów zdobywanych w meczach domowych i wyjazdowych <span class="info-icon" data-i18n-text="homeAway.info">i</span></p>
+
+      <div id="homeaway-leaders" class="homeaway-leaders"></div>
 
       <div class="card" id="homeaway-controls">
         <div class="form-row">
