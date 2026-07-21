@@ -275,6 +275,7 @@ function renderRankings() {
 let ketchupSelectedId = null;
 let ketchupPlayersList = [];
 let ketchupLeadersShowCount = { underrated: 5, overrated: 5 };
+let ketchupFilterState = { pos: "0", team: "0", gws: "10" };
 
 function populateKetchupPlayers() {
   if (!bootstrapData) return;
@@ -299,13 +300,14 @@ function populateKetchupTeamFilter() {
   const teams = bootstrapData.teams || [];
   sel.innerHTML = `<option value="0">${getLang() === "pl" ? "Wszystkie" : "All"}</option>` +
     teams.map(t => `<option value="${t.id}">${t.short_name}</option>`).join("");
+  sel.value = ketchupFilterState.team;
 }
 
 function getKetchupLeadersData() {
   if (!bootstrapData) return [];
-  const posFilter = parseInt(document.getElementById("ketchup-leaders-pos")?.value || "0");
-  const teamFilter = parseInt(document.getElementById("ketchup-leaders-team")?.value || "0");
-  const gwFilter = parseInt(document.getElementById("ketchup-leaders-gws")?.value || "0");
+  const posFilter = parseInt(ketchupFilterState.pos);
+  const teamFilter = parseInt(ketchupFilterState.team);
+  const gwFilter = parseInt(ketchupFilterState.gws);
 
   const allGWs = bootstrapData.events || [];
   const finishedGWs = allGWs.filter(e => e.finished);
@@ -344,11 +346,17 @@ function renderKetchupLeaders() {
   populateKetchupTeamFilter();
 
   const scored = getKetchupLeadersData();
+  const totalFiltered = scored.length;
   const underrated = [...scored].sort((a, b) => b.diff - a.diff);
   const overrated = [...scored].sort((a, b) => a.diff - b.diff);
 
   const showU = Math.min(ketchupLeadersShowCount.underrated, underrated.length);
   const showO = Math.min(ketchupLeadersShowCount.overrated, overrated.length);
+
+  const posNames = { 0: lang === "pl" ? "Wszystkie" : "All", 1: "GK", 2: "DEF", 3: "MID", 4: "FWD" };
+  const teamName = ketchupFilterState.team !== "0" ? getTeamName(parseInt(ketchupFilterState.team)) : (lang === "pl" ? "Wszystkie drużyny" : "All teams");
+  const gwLabel = ketchupFilterState.gws !== "0" ? `GW ${ketchupFilterState.gws}` : (lang === "pl" ? "Wszystkie GW" : "All GWs");
+  const filterSummary = `${posNames[ketchupFilterState.pos] || "All"} · ${teamName} · ${gwLabel} · ${totalFiltered} ${lang === "pl" ? "zawodników" : "players"}`;
 
   const renderCard = (title, color, icon, list, showCount, key) => {
     const visible = list.slice(0, showCount);
@@ -367,7 +375,7 @@ function renderKetchupLeaders() {
       ${lang === "pl" ? `Pokaż więcej (+5) z ${list.length}` : `Show more (+5) of ${list.length}`}
     </div>` : "";
     return `<div class="leader-card">
-      <h3 style="color:${color}">${icon} ${title}</h3>
+      <h3 style="color:${color}">${icon} ${title} <span style="font-size:0.75rem;font-weight:400;color:var(--text-dim)">(${showCount}/${list.length})</span></h3>
       ${rows}
       ${moreBtn}
     </div>`;
@@ -376,35 +384,33 @@ function renderKetchupLeaders() {
   const uTitle = lang === "pl" ? "Niedoszacowani (grają ponad xP)" : "Underrated (overperforming xP)";
   const oTitle = lang === "pl" ? "Przeszacowani (grają poniżej xP)" : "Overrated (underperforming xP)";
 
+  const gwsOptions = ["0","5","10","19","29"].map(v =>
+    `<option value="${v}" ${ketchupFilterState.gws === v ? "selected" : ""}>${v === "0" ? (lang === "pl" ? "Wszystkie" : "All") : v}</option>`
+  ).join("");
+  const posOptions = [
+    {v:"0",l: lang === "pl" ? "Wszystkie" : "All"},
+    {v:"1",l: lang === "pl" ? "Bramkarze" : "GK"},
+    {v:"2",l: lang === "pl" ? "Obrońcy" : "DEF"},
+    {v:"3",l: lang === "pl" ? "Pomocnicy" : "MID"},
+    {v:"4",l: lang === "pl" ? "Napastnicy" : "FWD"},
+  ].map(o => `<option value="${o.v}" ${ketchupFilterState.pos === o.v ? "selected" : ""}>${o.l}</option>`).join("");
+
   el.innerHTML = `
     <div class="card" style="margin-bottom:12px">
-      <div class="form-row">
+      <div class="form-row" style="align-items:end">
         <div class="form-group">
           <label data-i18n="ketchup.position">Pozycja</label>
-          <select id="ketchup-leaders-pos">
-            <option value="0" data-i18n="common.all">Wszystkie</option>
-            <option value="1" data-i18n="rankings.gk">Bramkarze</option>
-            <option value="2" data-i18n="rankings.def">Obrońcy</option>
-            <option value="3" data-i18n="rankings.mid">Pomocnicy</option>
-            <option value="4" data-i18n="rankings.fwd">Napastnicy</option>
-          </select>
+          <select id="ketchup-leaders-pos">${posOptions}</select>
         </div>
         <div class="form-group">
           <label data-i18n="ketchup.team">Drużyna</label>
-          <select id="ketchup-leaders-team">
-            <option value="0">Wszystkie</option>
-          </select>
+          <select id="ketchup-leaders-team"></select>
         </div>
         <div class="form-group">
           <label data-i18n="common.lastGWs">Ostatnie X kolejek</label>
-          <select id="ketchup-leaders-gws">
-            <option value="0">Wszystkie</option>
-            <option value="5">5</option>
-            <option value="10" selected>10</option>
-            <option value="19">19</option>
-            <option value="29">29</option>
-          </select>
+          <select id="ketchup-leaders-gws">${gwsOptions}</select>
         </div>
+        <div style="color:var(--text-dim);font-size:0.82rem;padding-bottom:4px">${filterSummary}</div>
       </div>
     </div>
     <div class="charts-row">
@@ -413,8 +419,8 @@ function renderKetchupLeaders() {
     </div>`;
 
   populateKetchupTeamFilter();
-  const teamSel = document.getElementById("ketchup-leaders-team");
-  if (teamSel) teamSel.value = "0";
+  document.getElementById("ketchup-leaders-pos").value = ketchupFilterState.pos;
+  document.getElementById("ketchup-leaders-gws").value = ketchupFilterState.gws;
 
   el.querySelectorAll(".leader-more").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -427,6 +433,9 @@ function renderKetchupLeaders() {
 
   el.querySelectorAll("#ketchup-leaders-pos, #ketchup-leaders-team, #ketchup-leaders-gws").forEach(sel => {
     sel.addEventListener("change", () => {
+      ketchupFilterState.pos = document.getElementById("ketchup-leaders-pos").value;
+      ketchupFilterState.team = document.getElementById("ketchup-leaders-team").value;
+      ketchupFilterState.gws = document.getElementById("ketchup-leaders-gws").value;
       ketchupLeadersShowCount = { underrated: 5, overrated: 5 };
       renderKetchupLeaders();
     });
@@ -1308,41 +1317,192 @@ async function runMyTeam() {
 
     document.getElementById("myteam-tabs").style.display = "";
 
+    // === REZERWOwi TAB — full per-GW bench breakdown ===
     const worstBench = [...reserveLost].sort((a, b) => b.benchPts - a.benchPts).slice(0, 5);
+    const avgBenchPts = gws.length > 0 ? (totalBenchLost / gws.length).toFixed(1) : "0";
+    const maxBenchGW = reserveLost.length > 0 ? reserveLost.reduce((m, r) => r.benchPts > m.benchPts ? r : m, reserveLost[0]) : null;
+    const benchZeroCount = reserveLost.filter(r => r.benchPts === 0).length;
+    const benchPositiveGWs = reserveLost.filter(r => r.benchPts > 0);
+
+    // Per-GW full bench breakdown
+    const benchTableRows = gws.map(gw => {
+      const picksData = gwPicksData[gw];
+      const picks = picksData.picks || [];
+      const bench = picks.filter(p => p.position > 11);
+      const starting = picks.filter(p => p.position <= 11);
+      const benchInfo = bench.map(b => {
+        const player = bootstrapData.elements.find(p => p.id === b.element);
+        const pts = playerGwMap[b.element]?.[gw] || 0;
+        // find cheapest starter in same position that bench player could replace
+        const samePosStarters = starting.filter(s => {
+          const sp = bootstrapData.elements.find(p => p.id === s.element);
+          return sp && sp.element_type === player?.element_type;
+        }).map(s => ({
+          pts: playerGwMap[s.element]?.[gw] || 0,
+          name: bootstrapData.elements.find(p => p.id === s.element)?.web_name || "?"
+        }));
+        const worstStarter = samePosStarters.length > 0 ? samePosStarters.reduce((w, s) => s.pts < w.pts ? s : w, samePosStarters[0]) : null;
+        const opportunityGain = worstStarter ? Math.max(0, pts - worstStarter.pts) : 0;
+        return { name: player?.web_name || "?", pts, opportunityGain, position: player?.element_type || 0 };
+      });
+      const totalBenchPts = benchInfo.reduce((s, b) => s + b.pts, 0);
+      const totalOppGain = benchInfo.reduce((s, b) => s + b.opportunityGain, 0);
+      return { gw, benchInfo, totalBenchPts, totalOppGain };
+    });
+
+    const totalOppGain = benchTableRows.reduce((s, r) => s + r.totalOppGain, 0);
+
     document.getElementById("myteam-reserves-tab").innerHTML = `
-      <h3 style="padding:12px 16px;color:var(--yellow)">${lang === "pl" ? "Stracone punkty — TOP 5 kolejek z największą stratą na ławce" : "Bench pts lost — TOP 5 worst bench decisions"}</h3>
+      <h3 style="padding:12px 16px;color:var(--yellow)">${lang === "pl" ? "TOP 5 kolejek z największą stratą na ławce" : "TOP 5 worst bench losses"}</h3>
       ${worstBench.map(r => `<div class="leader-row" style="padding:8px 16px">
         <span style="font-weight:600;min-width:50px">GW${r.gw}</span>
         <span style="color:var(--red);font-weight:700;margin-left:8px">-${r.benchPts} pkt</span>
         <span style="color:var(--text-dim);font-size:0.82rem;margin-left:auto">${r.benchNames}</span>
       </div>`).join("")}
+
+      <h3 style="padding:12px 16px;color:var(--green);margin-top:12px">${lang === "pl" ? "Podsumowanie ławki" : "Bench summary"}</h3>
+      <div style="padding:8px 16px;display:flex;flex-wrap:wrap;gap:12px">
+        <div class="leader-card" style="flex:1;min-width:140px"><h3 style="color:var(--red);font-size:0.9rem">🪑 ${lang === "pl" ? "Stracone" : "Lost"}</h3>
+          <div style="font-size:1.3rem;font-weight:700;color:var(--red)">${totalBenchLost} pkt</div>
+          <div style="color:var(--text-dim);font-size:0.8rem">${avgBenchPts} pkt/kolejkę</div></div>
+        <div class="leader-card" style="flex:1;min-width:140px"><h3 style="color:var(--yellow);font-size:0.9rem">🔄 ${lang === "pl" ? "Możliwe zyski" : "Opportunity gain"}</h3>
+          <div style="font-size:1.3rem;font-weight:700;color:var(--yellow)">${totalOppGain} pkt</div>
+          <div style="color:var(--text-dim);font-size:0.8rem">${lang === "pl" ? "gdyby zmienić ławkę" : "if bench swapped"}</div></div>
+        <div class="leader-card" style="flex:1;min-width:140px"><h3 style="color:var(--green);font-size:0.9rem">🎯 ${lang === "pl" ? "Kolejki bez strat" : "Zero-loss GWs"}</h3>
+          <div style="font-size:1.3rem;font-weight:700;color:var(--green)">${benchZeroCount}</div>
+          <div style="color:var(--text-dim);font-size:0.8rem">${lang === "pl" ? `z ${gws.length} kolejek` : `of ${gws.length} GWs`}</div></div>
+        <div class="leader-card" style="flex:1;min-width:140px"><h3 style="color:var(--accent);font-size:0.9rem">📊 ${lang === "pl" ? "Najgorszy GW" : "Worst GW"}</h3>
+          <div style="font-size:1.3rem;font-weight:700;color:var(--accent)">${maxBenchGW ? "GW" + maxBenchGW.gw : "-"}</div>
+          <div style="color:var(--text-dim);font-size:0.8rem">${maxBenchGW ? "-" + maxBenchGW.benchPts + " pkt" : ""}</div></div>
+      </div>
+
+      <h3 style="padding:12px 16px;color:var(--yellow);margin-top:12px">${lang === "pl" ? "Szczegóły ławki — kolejkę po kolei" : "Full bench breakdown — per gameweek"}</h3>
+      <div style="overflow-x:auto">
+      <table><thead><tr>
+        <th>GW</th>
+        <th>${lang === "pl" ? "Rezerwowi (nazwa, pkt)" : "Bench players (name, pts)"}</th>
+        <th>${lang === "pl" ? "Ławka suma" : "Bench total"}</th>
+        <th>${lang === "pl" ? "Zysk" : "Opp. gain"}</th>
+      </tr></thead><tbody>
+      ${benchTableRows.map(r => {
+        const players = r.benchInfo.map(b => {
+          const posName = getPositionShort(b.position);
+          const ptsColor = b.pts >= 5 ? "var(--green)" : b.pts >= 2 ? "var(--yellow)" : b.pts > 0 ? "var(--text-dim)" : "var(--red)";
+          const gainIcon = b.opportunityGain > 0 ? `<span style="color:var(--green);font-size:0.75rem"> (+${b.opportunityGain})</span>` : "";
+          return `<span style="display:inline-block;margin-right:6px;font-size:0.82rem"><span class="pos-badge pos-${posName.toLowerCase()}" style="font-size:0.7rem">${posName}</span> <b>${b.name}</b> <span style="color:${ptsColor};font-weight:600">${b.pts}</span>${gainIcon}</span>`;
+        }).join("");
+        const benchColor = r.totalBenchPts >= 10 ? "var(--red)" : r.totalBenchPts >= 5 ? "var(--yellow)" : "var(--text-dim)";
+        const gainColor = r.totalOppGain > 0 ? "var(--green)" : "var(--text-dim)";
+        return `<tr>
+          <td style="font-weight:600">${r.gw}</td>
+          <td>${players || "<span style='color:var(--text-dim)'>-</span>"}</td>
+          <td class="stat-val" style="color:${benchColor};font-weight:700">${r.totalBenchPts}</td>
+          <td class="stat-val" style="color:${gainColor};font-weight:700">${r.totalOppGain > 0 ? "+" + r.totalOppGain : "-"}</td>
+        </tr>`;
+      }).join("")}
+      </tbody></table>
+      </div>
       <div style="padding:12px 16px;color:var(--text-dim);font-size:0.85rem;border-top:1px solid var(--border)">
-        ${lang === "pl" ? `Łącznie stracono ${totalBenchLost} pkt wybierając skład zamiast rezerwowych` : `Total ${totalBenchLost} pts lost from bench decisions`}
+        ${lang === "pl" ? `Łącznie stracono ${totalBenchLost} pkt wybierając skład zamiast rezerwowych. Możliwy dodatkowy zysk: ${totalOppGain} pkt` : `Total ${totalBenchLost} pts lost. Potential gain from swaps: ${totalOppGain} pts`}
       </div>`;
 
-    const worstCaptains = [...captainData].filter(c => !c.wasCaptainBest).sort((a, b) => a.captainActualPts - b.captainActualPts).slice(0, 5);
+    // === KAPITANOWIE TAB — expanded analysis ===
+    const vcData = [];
+    for (const gw of gws) {
+      const picksData = gwPicksData[gw];
+      const picks = picksData.picks || [];
+      const vc = picks.find(p => p.is_vice_captain);
+      if (vc) {
+        const vcPlayer = bootstrapData.elements.find(p => p.id === vc.element);
+        const vcPts = playerGwMap[vc.element]?.[gw] || 0;
+        const cap = picks.find(p => p.is_captain);
+        const capPts = cap ? (playerGwMap[cap.element]?.[gw] || 0) : 0;
+        vcData.push({ gw, vcName: vcPlayer?.web_name || "?", vcPts, capPts, vcBetter: vcPts > capPts });
+      }
+    }
+    const vcBetterCount = vcData.filter(v => v.vcBetter).length;
+    const vcAvgPts = vcData.length > 0 ? (vcData.reduce((s, v) => s + v.vcPts, 0) / vcData.length).toFixed(1) : "0";
+    const capAvgPts = captainData.length > 0 ? (captainData.reduce((s, c) => s + c.captainActualPts, 0) / captainData.length).toFixed(1) : "0";
+    const capEfficiency = captainData.length > 0 ? (captainData.reduce((s, c) => s + parseInt(c.efficiency || 0), 0) / captainData.length).toFixed(0) : "0";
+    const missedPicks = captainData.filter(c => !c.wasCaptainBest).sort((a, b) => b.bestPlayerPts - a.captainPts);
+    const worstMiss = missedPicks.length > 0 ? missedPicks[0] : null;
+
     document.getElementById("myteam-captains-tab").innerHTML = `
-      <h3 style="padding:12px 16px;color:var(--green)">${lang === "pl" ? "Analiza kapitanów kolejkę po kolejce" : "Captain analysis per gameweek"}</h3>
+      <h3 style="padding:12px 16px;color:var(--green)">${lang === "pl" ? "Podsumowanie kapitanów" : "Captain summary"}</h3>
+      <div style="padding:8px 16px;display:flex;flex-wrap:wrap;gap:12px">
+        <div class="leader-card" style="flex:1;min-width:140px"><h3 style="color:var(--green);font-size:0.9rem">✅ ${lang === "pl" ? "Najlepszy wybór" : "Best pick"}</h3>
+          <div style="font-size:1.3rem;font-weight:700;color:var(--green)">${captainBestCount}/${gws.length}</div>
+          <div style="color:var(--text-dim);font-size:0.8rem">${((captainBestCount / gws.length) * 100).toFixed(0)}% ${lang === "pl" ? "kolejek" : "GWs"}</div></div>
+        <div class="leader-card" style="flex:1;min-width:140px"><h3 style="color:var(--yellow);font-size:0.9rem">🟡 ${lang === "pl" ? "W top 3" : "In top 3"}</h3>
+          <div style="font-size:1.3rem;font-weight:700;color:var(--yellow)">${captainTop3Count}/${gws.length}</div>
+          <div style="color:var(--text-dim);font-size:0.8rem">${((captainTop3Count / gws.length) * 100).toFixed(0)}%</div></div>
+        <div class="leader-card" style="flex:1;min-width:140px"><h3 style="color:var(--accent);font-size:0.9rem">🎯 ${lang === "pl" ? "Skuteczność" : "Efficiency"}</h3>
+          <div style="font-size:1.3rem;font-weight:700;color:var(--accent)">${capEfficiency}%</div>
+          <div style="color:var(--text-dim);font-size:0.8rem">${lang === "pl" ? "vs max możliwe" : "vs max possible"}</div></div>
+        <div class="leader-card" style="flex:1;min-width:140px"><h3 style="color:var(--blue);font-size:0.9rem">📊 ${lang === "pl" ? "Średnia C" : "Avg C pts"}</h3>
+          <div style="font-size:1.3rem;font-weight:700;color:var(--blue)">${capAvgPts}</div>
+          <div style="color:var(--text-dim);font-size:0.8rem">${lang === "pl" ? "pkt/kolejkę" : "pts/GW"}</div></div>
+      </div>
+
+      <h3 style="padding:12px 16px;color:var(--green);margin-top:12px">${lang === "pl" ? "Analiza kapitanów kolejkę po kolei" : "Captain analysis per gameweek"}</h3>
+      <div style="overflow-x:auto">
       <table><thead><tr>
         <th>GW</th><th>${lang === "pl" ? "Kapitan" : "Captain"}</th>
-        <th>${lang === "pl" ? "Pkt kapitana" : "Captain pts"}</th>
+        <th>${lang === "pl" ? "Pkt C" : "C pts"}</th>
         <th>${lang === "pl" ? "Najlepszy w teamie" : "Best in team"}</th>
         <th>${lang === "pl" ? "Pkt najlepszego" : "Best pts"}</th>
+        <th>${lang === "pl" ? "Strata" : "Loss"}</th>
         <th>${lang === "pl" ? "Status" : "Status"}</th>
       </tr></thead><tbody>
       ${captainData.map(c => {
         const statusColor = c.wasCaptainBest ? "var(--green)" : c.wasCaptainInTop3 ? "var(--yellow)" : "var(--red)";
         const statusText = c.wasCaptainBest ? "✅ C" : c.wasCaptainInTop3 ? "🟡 Top3" : "❌";
+        const loss = c.wasCaptainBest ? 0 : (c.bestPlayerPts * 2 - c.captainPts);
+        const lossText = loss > 0 ? `<span style="color:var(--red)">-${loss}</span>` : `<span style="color:var(--green)">0</span>`;
         return `<tr>
-          <td>${c.gw}</td>
+          <td style="font-weight:600">${c.gw}</td>
           <td><b>${c.captainName}</b> (C)</td>
           <td class="stat-val">${c.captainPts}</td>
           <td>${c.bestPlayerName}</td>
           <td class="stat-val">${c.bestPlayerPts}</td>
+          <td class="stat-val">${lossText}</td>
           <td style="color:${statusColor};font-weight:600">${statusText}</td>
         </tr>`;
       }).join("")}
-      </tbody></table>`;
+      </tbody></table>
+      </div>
+
+      <h3 style="padding:12px 16px;color:var(--blue);margin-top:12px">${lang === "pl" ? "Vice-Kapitan — analiza" : "Vice-Captain analysis"}</h3>
+      <div style="overflow-x:auto">
+      <table><thead><tr>
+        <th>GW</th>
+        <th>${lang === "pl" ? "Vice-Kapitan" : "Vice-Captain"}</th>
+        <th>${lang === "pl" ? "Pkt VC" : "VC pts"}</th>
+        <th>${lang === "pl" ? "Pkt C" : "C pts"}</th>
+        <th>${lang === "pl" ? "Lepszy?" : "Better?"}</th>
+      </tr></thead><tbody>
+      ${vcData.map(v => {
+        const color = v.vcBetter ? "var(--green)" : "var(--text-dim)";
+        return `<tr>
+          <td style="font-weight:600">${v.gw}</td>
+          <td><b>${v.vcName}</b> (VC)</td>
+          <td class="stat-val" style="color:${color}">${v.vcPts}</td>
+          <td>${v.capPts}</td>
+          <td style="color:${v.vcBetter ? 'var(--green)' : 'var(--red)'};font-weight:600">${v.vcBetter ? "✅" : "❌"}</td>
+        </tr>`;
+      }).join("")}
+      </tbody></table>
+      </div>
+      <div style="padding:12px 16px;color:var(--text-dim);font-size:0.85rem;border-top:1px solid var(--border)">
+        ${lang === "pl"
+          ? `VC byłby lepszy od C w ${vcBetterCount} z ${vcData.length} kolejek. Średnia VC: ${vcAvgPts} pkt, Średnia C: ${capAvgPts} pkt`
+          : `VC would have been better in ${vcBetterCount} of ${vcData.length} GWs. Avg VC: ${vcAvgPts} pts, Avg C: ${capAvgPts} pts`}
+      </div>
+
+      ${worstMiss ? `<div style="padding:12px 16px;border-top:1px solid var(--border)">
+        <span style="color:var(--red);font-weight:600">💀 ${lang === "pl" ? "Najgorszy wybór C" : "Worst captain pick"}:</span>
+        <span style="color:var(--text-dim)"> GW${worstMiss.gw} — ${worstMiss.captainName} (${worstMiss.captainPts} pkt) vs ${worstMiss.bestPlayerName} (${worstMiss.bestPlayerPts} pkt, strata ${worstMiss.bestPlayerPts * 2 - worstMiss.captainPts} pkt)</span>
+      </div>` : ""}`;
 
     document.getElementById("myteam-gwhistory-tab").innerHTML = `
       <h3 style="padding:12px 16px">${lang === "pl" ? "Historia punktów w kolejce" : "Gameweek history"}</h3>
@@ -2605,6 +2765,67 @@ function renderStadiums() {
   else renderStadiumsDistances();
 }
 
+async function computePLStandings() {
+  if (!bootstrapData) return { standings: {}, sorted: [], posHistory: {} };
+  const teams = bootstrapData.teams || [];
+  const standings = {};
+  for (const t of teams) {
+    standings[t.id] = { id: t.id, name: t.name, short_name: t.short_name, p: 0, w: 0, d: 0, l: 0, gf: 0, ga: 0, gd: 0, pts: 0 };
+  }
+  const allGWs = bootstrapData.events || [];
+  const finishedGWs = allGWs.filter(e => e.finished).map(e => e.id).sort((a, b) => a - b);
+
+  let fixtures = [];
+  try {
+    fixtures = await fetchFPL("fixtures/");
+  } catch {}
+
+  // Compute final standings
+  for (const f of fixtures) {
+    if (!finishedGWs.includes(f.event)) continue;
+    if (f.team_h_score == null || f.team_a_score == null) continue;
+    const h = standings[f.team_h];
+    const a = standings[f.team_a];
+    if (!h || !a) continue;
+    h.p++; a.p++;
+    h.gf += f.team_h_score; h.ga += f.team_a_score;
+    a.gf += f.team_a_score; a.ga += f.team_h_score;
+    h.gd = h.gf - h.ga;
+    a.gd = a.gf - a.ga;
+    if (f.team_h_score > f.team_a_score) { h.w++; h.pts += 3; a.l++; }
+    else if (f.team_h_score < f.team_a_score) { a.w++; a.pts += 3; h.l++; }
+    else { h.d++; a.d++; h.pts++; a.pts++; }
+  }
+  const sorted = Object.values(standings).sort((a, b) => b.pts - a.pts || b.gd - a.gd || b.gf - a.gf);
+
+  // Compute per-GW position history
+  const posHistory = {};
+  for (const t of teams) { posHistory[t.id] = []; }
+  const running = {};
+  for (const t of teams) { running[t.id] = { p: 0, w: 0, d: 0, l: 0, gf: 0, ga: 0, gd: 0, pts: 0 }; }
+  for (const gwId of finishedGWs) {
+    const gwFixtures = fixtures.filter(f => f.event === gwId && f.team_h_score != null && f.team_a_score != null);
+    for (const f of gwFixtures) {
+      const h = running[f.team_h];
+      const a = running[f.team_a];
+      if (!h || !a) continue;
+      h.p++; a.p++;
+      h.gf += f.team_h_score; h.ga += f.team_a_score;
+      a.gf += f.team_a_score; a.ga += f.team_h_score;
+      h.gd = h.gf - h.ga; a.gd = a.gf - a.ga;
+      if (f.team_h_score > f.team_a_score) { h.w++; h.pts += 3; a.l++; }
+      else if (f.team_h_score < f.team_a_score) { a.w++; a.pts += 3; h.l++; }
+      else { h.d++; a.d++; h.pts++; a.pts++; }
+    }
+    const gwSorted = Object.entries(running).map(([id, s]) => ({ id: parseInt(id), ...s }))
+      .sort((a, b) => b.pts - a.pts || b.gd - a.gd || b.gf - a.gf);
+    for (let i = 0; i < gwSorted.length; i++) {
+      if (posHistory[gwSorted[i].id]) posHistory[gwSorted[i].id].push({ gw: gwId, pos: i + 1 });
+    }
+  }
+  return { standings, sorted, posHistory };
+}
+
 function renderStadiumsMap() {
   const container = document.getElementById("stadiums-map");
   if (!container) return;
@@ -2625,15 +2846,65 @@ function renderStadiumsMap() {
     }).addTo(map);
 
     const regionColors = { london: "#f59e0b", north: "#3b82f6", midlands: "#a855f7", south: "#22c55e", east: "#ef4444" };
+    const lang = getLang();
 
+    computePLStandings().then(({ standings, sorted, posHistory }) => {
     for (const [id, t] of Object.entries(TEAM_COORDS)) {
       const tid = parseInt(id);
       const color = regionColors[t.region] || "#888";
       const teamColor = TEAM_COLORS[tid] || "#555";
+      const st = standings[tid];
+      const pos = sorted.findIndex(s => s.id === tid) + 1;
+      const hist = posHistory[tid] || [];
+      const prevPos = hist.length >= 2 ? hist[hist.length - 2].pos : null;
+      const trend = prevPos ? (pos < prevPos ? "▲" : pos > prevPos ? "▼" : "=") : "";
+      const trendColor = pos < prevPos ? "var(--green)" : pos > prevPos ? "var(--red)" : "var(--text-dim)";
+
+      const posBadge = `<div style="position:absolute;top:-8px;right:-8px;background:${teamColor};color:#fff;font-weight:700;font-size:0.7rem;width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid #1a1d27;z-index:10">${pos}</div>`;
+
       const marker = L.circleMarker(t.stadium, {
         radius: 8, fillColor: teamColor, color: color, weight: 2, fillOpacity: 0.9,
+        className: "stadium-marker"
       }).addTo(map);
-      marker.bindPopup(`<div style="font-weight:700;color:${teamColor}">${t.name}</div><div style="font-size:0.85rem;color:#888">${t.stadiumName}</div><div style="font-size:0.8rem;color:#aaa">${REGIONS[t.region]?.name || t.region}</div>`);
+
+      // Per-GW position sparkline as text
+      const posTrend = hist.slice(-10).map(h => h.pos).join(" → ");
+      const formGWs = hist.slice(-5);
+      const formPts = formGWs.map(h => h.pos);
+      const formTrend = formPts.length >= 2 ? (formPts[formPts.length - 1] < formPts[0] ? "↑" : formPts[formPts.length - 1] > formPts[0] ? "↓" : "→") : "";
+
+      marker.bindPopup(`
+        <div style="min-width:180px">
+          <div style="font-weight:700;color:${teamColor};font-size:1.1rem">${t.name}</div>
+          <div style="font-size:0.85rem;color:#888;margin-bottom:6px">${t.stadiumName} · ${REGIONS[t.region]?.name || t.region}</div>
+          <div style="display:flex;gap:8px;align-items:center;margin:6px 0">
+            <div style="background:${teamColor};color:#fff;font-weight:700;font-size:1.2rem;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center">${pos}</div>
+            <div>
+              <div style="font-weight:600">${lang === "pl" ? "Pozycja" : "Position"} <span style="color:${trendColor};font-weight:700">${pos}/20 ${trend}</span></div>
+              <div style="color:var(--text-dim);font-size:0.8rem">${st?.p || 0} ${lang === "pl" ? "meków" : "games"} · ${st?.pts || 0} ${lang === "pl" ? "pkt" : "pts"}</div>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;text-align:center;margin:8px 0;font-size:0.8rem">
+            <div><div style="color:var(--green);font-weight:700">${st?.w || 0}</div><div style="color:var(--text-dim)">${lang === "pl" ? "W" : "W"}</div></div>
+            <div><div style="color:var(--yellow);font-weight:700">${st?.d || 0}</div><div style="color:var(--text-dim)">${lang === "pl" ? "R" : "D"}</div></div>
+            <div><div style="color:var(--red);font-weight:700">${st?.l || 0}</div><div style="color:var(--text-dim)">${lang === "pl" ? "P" : "L"}</div></div>
+            <div><div style="font-weight:700">${st?.gf || 0}:${st?.ga || 0}</div><div style="color:var(--text-dim)">GD ${st?.gd > 0 ? "+" : ""}${st?.gd || 0}</div></div>
+          </div>
+          ${hist.length > 0 ? `<div style="border-top:1px solid #333;padding-top:6px;margin-top:6px">
+            <div style="font-size:0.8rem;color:#aaa;margin-bottom:3px">${lang === "pl" ? "Pozycja w sezonie" : "Season position"} ${formTrend}</div>
+            <div style="font-size:0.75rem;color:#888">${posTrend}</div>
+          </div>` : ""}
+        </div>
+      `);
+
+      // Add position badge as HTML overlay near marker
+      const badgeIcon = L.divIcon({
+        className: "",
+        html: posBadge,
+        iconSize: [18, 18],
+        iconAnchor: [9, 9]
+      });
+      L.marker(t.stadium, { icon: badgeIcon, interactive: false }).addTo(map);
     }
 
     const regionLegend = Object.entries(regionColors).map(([k, c]) =>
@@ -2647,6 +2918,7 @@ function renderStadiumsMap() {
     setTimeout(() => { if (window._stadiumsMap) window._stadiumsMap.invalidateSize(); }, 800);
     setTimeout(() => { if (window._stadiumsMap) window._stadiumsMap.invalidateSize(); }, 1500);
     loadStadiumsFixtures(map);
+    }); // end computePLStandings.then
   };
   requestAnimationFrame(doInit);
 }
