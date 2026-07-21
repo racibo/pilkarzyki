@@ -183,6 +183,29 @@ function showSection(sectionId, state) {
   if (chartWrap && state !== "chart") chartWrap.style.display = "none";
 }
 
+function updateOptimizerSlider() {
+  if (!bootstrapData) return;
+  const allPlayers = bootstrapData.elements.filter((p) => p.minutes > 0 || p.total_points > 0);
+  const limits = { 1: 2, 2: 5, 3: 5, 4: 3 };
+  let minCost = 0;
+  for (const [pos, count] of Object.entries(limits)) {
+    const cheapest = allPlayers
+      .filter((p) => p.element_type === parseInt(pos) && p.now_cost > 0)
+      .sort((a, b) => a.now_cost - b.now_cost)
+      .slice(0, count);
+    minCost += cheapest.reduce((s, p) => s + p.now_cost, 0);
+  }
+  // Round up to nearest 5, add 10 margin
+  const sliderMin = Math.ceil((minCost + 10) / 5) * 5;
+  const slider = document.getElementById("optimizer-budget");
+  if (slider) {
+    slider.min = sliderMin;
+    slider.max = 1000;
+    slider.value = 1000;
+    document.getElementById("optimizer-budget-display").textContent = "100.0";
+  }
+}
+
 async function loadData() {
   showSection("rankings", "loading");
   try {
@@ -192,6 +215,7 @@ async function loadData() {
     renderNaStart();
     populateKetchupPlayers();
     populateTop15GWs();
+    updateOptimizerSlider();
   } catch (err) {
     const body = document.getElementById("rankings-body");
     body.innerHTML = `<tr><td colspan="5"><div class="error-msg">${t("common.error")}: ${err.message}</div></td></tr>`;
@@ -732,7 +756,7 @@ function renderBudgetSensitivityChart() {
   const container = document.getElementById("optimizer-chart-budget");
   if (!container || !bootstrapData) return;
 
-  const budgets = [30, 35, 40, 45, 50, 55, 60, 65];
+  const budgets = [65, 70, 75, 80, 85, 90, 95, 100];
   const results = [];
 
   for (const b of budgets) {
