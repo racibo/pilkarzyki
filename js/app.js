@@ -1,6 +1,6 @@
 import { getBootstrapStatic, getPlayerSummary, getManagerPicks, getLeagueStandings, getFixtures, fetchVaastavGW } from "./api.js";
 import { t, setLang, getLang } from "./i18n.js";
-import { TEAM_COORDS, travelDistance } from "./stadiums.js";
+import { TEAM_COORDS, REGIONS, travelDistance } from "./stadiums.js";
 
 let bootstrapData = null;
 let currentRankingsTab = "gk";
@@ -9,6 +9,9 @@ let homeAwaySort = { field: "diff", dir: "desc" };
 let homeAwayData = [];
 let myTeamData = null;
 let naStartSort = { field: "ptsPerCost", dir: "desc" };
+let top15AllData = {};
+let top15Tab = "points";
+let squadMap = null;
 
 const TEAM_COLORS = {
   1: "#e30613", 2: "#0057a8", 3: "#ee2737", 4: "#6c1d45",
@@ -1450,143 +1453,218 @@ function renderPriceHistoryChartCSV(gwData, player, season) {
 
 // ===================== TOP 15 =====================
 
-let top15Tab = "points";
-let top15Data = [];
-
 function populateTop15GWs() {
-  const gwSelect = document.getElementById("top15-gw");
   if (!bootstrapData) return;
   const allGWs = bootstrapData.events || [];
   const finishedGWs = allGWs.filter((e) => e.finished);
-  gwSelect.innerHTML = finishedGWs.map((e) =>
-    `<option value="${e.id}">GW${e.id}</option>`
-  ).join("");
-  if (finishedGWs.length > 0) {
-    gwSelect.value = finishedGWs[finishedGWs.length - 1].id;
-  }
+  const html = finishedGWs.map((e) => `<option value="${e.id}">GW${e.id}</option>`).join("");
+  const startSel = document.getElementById("top15-gw-start");
+  const endSel = document.getElementById("top15-gw-end");
+  if (startSel) { startSel.innerHTML = html; if (finishedGWs.length > 0) startSel.value = finishedGWs[0].id; }
+  if (endSel) { endSel.innerHTML = html; if (finishedGWs.length > 0) endSel.value = finishedGWs[finishedGWs.length - 1].id; }
 }
 
 function initTop15() {
   document.getElementById("top15-run").addEventListener("click", runTop15);
-
   document.getElementById("top15-tabs").addEventListener("click", (e) => {
     const tab = e.target.closest(".tab");
     if (!tab) return;
     document.querySelectorAll("#top15-tabs .tab").forEach((t) => t.classList.remove("active"));
     tab.classList.add("active");
     top15Tab = tab.dataset.tab;
-    renderTop15();
+    if (Object.keys(top15AllData).length > 0) renderTop15Charts();
   });
 }
 
 async function runTop15() {
   if (!bootstrapData) return;
-  const gw = parseInt(document.getElementById("top15-gw").value);
-  if (!gw) return;
+  const startGW = parseInt(document.getElementById("top15-gw-start").value);
+  const endGW = parseInt(document.getElementById("top15-gw-end").value);
+  if (!startGW || !endGW || startGW > endGW) return;
 
   showSection("top15", "loading");
   const loadingEl = document.getElementById("top15-loading");
   const lang = getLang();
+  document.getElementById("top15-chart-wrap").style.display = "none";
+  document.getElementById("top15-table").style.display = "none";
+
+  top15AllData = {};
+  const season = detectSeason(bootstrapData);
+  const seasonKey = season.replace("/", "-");
 
   try {
-    // Get points from bootstrap element data (all players have total_points)
-    // For per-GW points, we'd need element-summary, but that's expensive.
-    // Instead, use vaastav CSV which has both points and selected (ownership) per GW
-    const season = detectSeason(bootstrapData);
-    const seasonKey = season.replace("/", "-"); // "25/26" → "25-26"
-    // Try to get data for2025-26 or2024-25
-    let csvData;
-    try {
-      csvData = await fetchVaastavGW(seasonKey, gw);
-    } catch {
-      // Try previous season format
-      try {
-        csvData = await fetchVaastavGW("2024-25", gw);
-      } catch {
-        csvData = [];
+    const batchSize = 5;
+    for (let batchStart = startGW; batchStart <= endGW; batchStart += batchSize) {
+      const batchEnd = Math.min(batchStart + batchSize - 1, endGW);
+      const promises = [];
+      for (let gw = batchStart; gw <= batchEnd; gw++) {
+        promises.push(
+          fetchVaastavGW(seasonKey, gw).catch(() => {
+            return fetchVaastavGW("2024-25", gw).catch(() => []);
+          })
+        );
       }
+      if (loadingEl) loadingEl.querySelector("div:last-child").textContent = `${lang === "pl" ? "Ładowanie" : "Loading"} GW${batchStart}–${batchEnd}...`;
+      const results = await Promise.all(promises);
+      results.forEach((csvData, i) => {
+        const gw = batchStart + i;
+        const teamNameToId = {};
+        if (bootstrapData.teams) {
+          for (const team of bootstrapData.teams) {
+            teamNameToId[team.name] = team.id;
+            teamNameToId[team.short_name] = team.id;
+          }
+        }
+        const posMap = { "GKP": 1, "DEF": 2, "MID": 3, "FWD": 4 };
+        top15AllData[gw] = csvData.map((r) => ({
+          name: r.name || "",
+          team: teamNameToId[r.team] || 0,
+          position: posMap[r.position] || 0,
+          points: parseInt(r.total_points) || 0,
+          selected: parseInt(r.selected) || 0,
+        }));
+      });
     }
 
-    if (csvData.length === 0) {
-      showSection("top15", "placeholder");
-      return;
-    }
-
-    // Map team names to IDs
-    const teamNameToId = {};
-    if (bootstrapData.teams) {
-      for (const team of bootstrapData.teams) {
-        teamNameToId[team.name] = team.id;
-        teamNameToId[team.short_name] = team.id;
-      }
-    }
-
-    // Map position numbers
-    const posMap = { "GKP": 1, "DEF": 2, "MID": 3, "FWD": 4 };
-
-    top15Data = csvData.map((r) => {
-      const teamId = teamNameToId[r.team] || teamNameToId[r.name?.split(" ").pop()] || 0;
-      const posId = posMap[r.position] || 0;
-      return {
-        name: r.name || "",
-        team: teamId,
-        position: posId,
-        points: parseInt(r.total_points) || 0,
-        selected: parseInt(r.selected) || 0,
-        value: parseInt(r.value) || 0,
-      };
-    });
-
-    renderTop15();
+    renderTop15Charts();
     showSection("top15", "table");
   } catch {
     showSection("top15", "placeholder");
   }
 }
 
-function renderTop15() {
+function renderTop15Charts() {
+  const container = document.getElementById("top15-chart");
+  if (!container) return;
   const lang = getLang();
-  const header = document.getElementById("top15-metric-header");
+  const gws = Object.keys(top15AllData).map(Number).sort((a, b) => a - b);
+  if (gws.length === 0) return;
 
-  let sorted;
-  if (top15Tab === "points") {
-    sorted = [...top15Data].sort((a, b) => b.points - a.points).slice(0, 15);
-    header.textContent = lang === "pl" ? "Pkt" : "Pts";
-  } else {
-    sorted = [...top15Data].sort((a, b) => b.selected - a.selected).slice(0, 15);
-    header.textContent = lang === "pl" ? "Właściciele" : "Owners";
+  const metric = top15Tab === "points" ? "points" : "selected";
+
+  const playerStats = {};
+  for (const gw of gws) {
+    const sorted = [...(top15AllData[gw] || [])].sort((a, b) => b[metric] - a[metric]).slice(0, 15);
+    for (const p of sorted) {
+      if (!playerStats[p.name]) playerStats[p.name] = { name: p.name, team: p.team, position: p.position, appearances: 0, totalMetric: 0 };
+      playerStats[p.name].appearances++;
+      playerStats[p.name].totalMetric += p[metric];
+    }
   }
 
-  const tbody = document.getElementById("top15-body");
-  tbody.innerHTML = sorted.map((r, i) => {
-    const color = TEAM_COLORS[r.team] || "#555";
-    const posClass = `pos-${getPositionShort(r.position).toLowerCase()}`;
-    const metric = top15Tab === "points" ? r.points : r.selected.toLocaleString();
-    return `<tr>
-      <td class="rank-num">${i + 1}</td>
-      <td>${r.name}</td>
-      <td><span class="team-color" style="background:${color}"></span>${getTeamName(r.team) || r.team}</td>
-      <td><span class="pos-badge ${posClass}">${getPositionShort(r.position)}</span></td>
-      <td class="stat-val">${metric}</td>
-    </tr>`;
-  }).join("");
+  const players = Object.values(playerStats).sort((a, b) => b.appearances - a.appearances || b.totalMetric - a.totalMetric);
+  const colors = ["#3b82f6","#ef4444","#22c55e","#eab308","#a855f7","#f97316","#06b6d4","#ec4899","#84cc16","#f43f5e","#6366f1","#14b8a6","#e879f9","#fb923c","#34d399"];
+
+  const svgW = 900, svgH = 420;
+  const pad = { top: 30, right: 20, bottom: 60, left: 60 };
+  const chartW = svgW - pad.left - pad.right;
+  const chartH = svgH - pad.top - pad.bottom;
+
+  const xStep = gws.length > 1 ? chartW / (gws.length - 1) : chartW;
+
+  const topPlayers = players.slice(0, Math.min(players.length, 20));
+
+  const playerGWValues = {};
+  for (const p of topPlayers) playerGWValues[p.name] = [];
+  for (const gw of gws) {
+    const sorted = [...(top15AllData[gw] || [])].sort((a, b) => b[metric] - a[metric]).slice(0, 15);
+    const inGW = {};
+    for (const p of sorted) inGW[p.name] = p[metric];
+    for (const p of topPlayers) {
+      playerGWValues[p.name].push(inGW[p.name] || 0);
+    }
+  }
+
+  let cumulative = new Array(gws.length).fill(0);
+  let layers = "";
+
+  for (let pi = topPlayers.length - 1; pi >= 0; pi--) {
+    const p = topPlayers[pi];
+    const color = colors[pi % colors.length];
+    const vals = playerGWValues[p.name];
+    const lower = [...cumulative];
+
+    const newCum = cumulative.map((c, i) => c + vals[i]);
+    let pathD = "";
+    pathD += `M ${pad.left} ${pad.top + chartH - (lower[0] / 1) * chartH}`;
+    for (let i = 0; i < gws.length; i++) {
+      const x = pad.left + (gws.length > 1 ? (i / (gws.length - 1)) * chartW : chartW / 2);
+      pathD += ` L ${x} ${pad.top + chartH - (newCum[i] / 1) * chartH}`;
+    }
+    for (let i = gws.length - 1; i >= 0; i--) {
+      const x = pad.left + (gws.length > 1 ? (i / (gws.length - 1)) * chartW : chartW / 2);
+      pathD += ` L ${x} ${pad.top + chartH - (lower[i] / 1) * chartH}`;
+    }
+    pathD += " Z";
+
+    layers += `<path d="${pathD}" fill="${color}" opacity="0.75"><title>${p.name} (${p.appearances} ${lang === "pl" ? "kolejek" : "GWs"})</title></path>`;
+
+    cumulative = newCum;
+  }
+
+  const maxVal = Math.max(...cumulative, 1);
+  let yTicks = "";
+  const steps = 5;
+  for (let i = 0; i <= steps; i++) {
+    const val = (maxVal / steps) * i;
+    const y = pad.top + chartH - (chartH / steps) * i;
+    yTicks += `<text class="chart-label" x="${pad.left - 6}" y="${y + 3}" text-anchor="end" font-size="10">${Math.round(val)}</text>`;
+    if (i > 0) yTicks += `<line class="chart-grid" x1="${pad.left}" y1="${y}" x2="${pad.left + chartW}" y2="${y}"/>`;
+  }
+
+  let xTicks = "";
+  const xLabelStep = Math.max(1, Math.floor(gws.length / 15));
+  for (let i = 0; i < gws.length; i += xLabelStep) {
+    const x = pad.left + (gws.length > 1 ? (i / (gws.length - 1)) * chartW : chartW / 2);
+    xTicks += `<text class="chart-label" x="${x}" y="${svgH - pad.bottom + 18}" text-anchor="middle" font-size="10">GW${gws[i]}</text>`;
+  }
+
+  let legend = `<g transform="translate(${pad.left}, 8)">`;
+  topPlayers.slice(0, 12).forEach((p, i) => {
+    const lx = i * 70;
+    const color = colors[i % colors.length];
+    legend += `<rect x="${lx}" y="0" width="10" height="10" fill="${color}" rx="2"/>`;
+    legend += `<text x="${lx + 14}" y="9" font-size="8" fill="var(--text-dim)" font-family="sans-serif">${p.name}</text>`;
+  });
+  legend += `</g>`;
+
+  const chartTitle = top15Tab === "points"
+    ? (lang === "pl" ? "Suma pkt Top 15 w kolejce" : "Top 15 total pts per GW")
+    : (lang === "pl" ? "Suma posiadania Top 15" : "Top 15 total ownership per GW");
+
+  container.innerHTML = `
+    <h3 class="chart-title" style="margin-bottom:8px">${chartTitle}</h3>
+    <svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg">
+      <line class="chart-axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + chartH}"/>
+      <line class="chart-axis" x1="${pad.left}" y1="${pad.top + chartH}" x2="${pad.left + chartW}" y2="${pad.top + chartH}"/>
+      ${yTicks}${xTicks}${layers}${legend}
+    </svg>`;
+
+  document.getElementById("top15-chart-wrap").style.display = "";
 }
 
 // ===================== SQUAD BUILDER (WEIGHTED) =====================
 
 let squadBuilderSort = { field: "compositeScore", dir: "desc" };
 let squadBuilderSquad = [];
+let squadBuilderFixtures = [];
 
 function initSquadBuilder() {
-  // Weight slider live update
   document.querySelectorAll(".weight-slider").forEach((slider) => {
     const valEl = slider.parentElement.querySelector(".weight-val");
-    slider.addEventListener("input", () => {
-      valEl.textContent = slider.value;
-    });
+    slider.addEventListener("input", () => { valEl.textContent = slider.value; });
   });
-
   document.getElementById("squadbuilder-run").addEventListener("click", runSquadBuilder);
+  populateSquadBuilderGWs();
+}
+
+function populateSquadBuilderGWs() {
+  if (!bootstrapData) return;
+  const allGWs = bootstrapData.events || [];
+  const finishedGWs = allGWs.filter((e) => e.finished);
+  const html = finishedGWs.map((e) => `<option value="${e.id}">GW${e.id}</option>`).join("");
+  const sel = document.getElementById("squadbuilder-gw");
+  if (sel) { sel.innerHTML = html; if (finishedGWs.length > 0) sel.value = finishedGWs[finishedGWs.length - 1].id; }
 }
 
 function getWeights() {
@@ -1597,32 +1675,49 @@ function getWeights() {
   return weights;
 }
 
+function renderFormExplanation(weights, teamFDR) {
+  const lang = getLang();
+  const el = document.getElementById("squadbuilder-form-explanation");
+  if (!el) return;
+  const parts = [];
+  if (weights.form > 0) parts.push(`<b>${lang === "pl" ? "Forma" : "Form"}</b>: ${lang === "pl" ? "Współczynnik formy z API FPL (0–15). Normalizowany względem najlepszego zawodnika." : "FPL form rating (0–15). Normalized vs best player."}`);
+  if (weights.fixture > 0) parts.push(`<b>${lang === "pl" ? "Terminarz" : "Fixtures"}</b>: ${lang === "pl" ? "Średni FDR nadchodzących meczów drużynowych. Niższy = łatwiejszy terminarz." : "Avg FDR of remaining fixtures. Lower = easier schedule."}`);
+  if (weights.homeaway > 0) parts.push(`<b>${lang === "pl" ? "Dom/Wyjazd" : "Home/Away"}</b>: ${lang === "pl" ? "Kombinacja formy i xP jako proxy przewagi meczów domowych." : "Combo of form + xP as proxy for home advantage."}`);
+  if (weights.xpts > 0) parts.push(`<b>xP</b>: ${lang === "pl" ? "(xG + xA) / max — oczekiwane zaangażowanie bramkowe z oficjalnych danych." : "(xG + xA) / max — expected goal involvement from official data."}`);
+  if (weights.minutes > 0) parts.push(`<b>${lang === "pl" ? "Minuty" : "Minutes"}</b>: ${lang === "pl" ? "Rozegrane minuty / max — preferuje regularnych graczy." : "Minutes played / max — favors regular starters."}`);
+  if (weights.distance > 0) parts.push(`<b>${lang === "pl" ? "Dystans" : "Distance"}</b>: ${lang === "pl" ? "1 − (śr. dystans wyjazdowy / max). Krótsze podróże = wyższy wynik." : "1 − (avg away dist / max). Shorter travel = higher score."}`);
+
+  if (parts.length > 0) {
+    el.style.display = "";
+    el.innerHTML = `<div class="form-explanation-box">${parts.join("<br>")}</div>`;
+  } else {
+    el.style.display = "none";
+  }
+}
+
 async function runSquadBuilder() {
   if (!bootstrapData) return;
   const weights = getWeights();
   const lang = getLang();
+  const targetGW = parseInt(document.getElementById("squadbuilder-gw")?.value) || 0;
 
   showSection("squadbuilder", "loading");
-  const loadingEl = document.getElementById("squadbuilder-loading");
   document.getElementById("squadbuilder-charts").style.display = "none";
+  document.getElementById("squadbuilder-map-wrap").style.display = "none";
+  document.getElementById("squadbuilder-fixtures").style.display = "none";
 
   try {
-    // Fetch fixtures for fixture difficulty
     let fixtures = [];
-    try {
-      fixtures = await getFixtures();
-    } catch {}
+    try { fixtures = await getFixtures(); } catch {}
 
-    // Get all players with minutes
     const allPlayers = bootstrapData.elements.filter((p) => p.minutes > 0 || p.total_points > 0);
 
-    // Normalize each factor across all players (0-1 scale)
     const maxForm = Math.max(...allPlayers.map((p) => parseFloat(p.form) || 0), 1);
     const maxXPts = Math.max(...allPlayers.map((p) => (parseFloat(p.expected_goals) || 0) + (parseFloat(p.expected_assists) || 0)), 0.01);
     const maxMinutes = Math.max(...allPlayers.map((p) => p.minutes || 0), 1);
 
-    // Calculate fixture difficulty per team (average of all fixtures)
     const teamFDR = {};
+    const teamNextFixtures = {};
     if (Array.isArray(fixtures)) {
       const fdrCounts = {};
       const fdrSums = {};
@@ -1639,38 +1734,47 @@ async function runSquadBuilder() {
       for (const teamId of Object.keys(fdrCounts)) {
         teamFDR[teamId] = fdrSums[teamId] / fdrCounts[teamId];
       }
+
+      if (targetGW) {
+        for (const f of fixtures) {
+          if (f.event !== targetGW) continue;
+          if (f.team_h) {
+            if (!teamNextFixtures[f.team_h]) teamNextFixtures[f.team_h] = [];
+            const opp = bootstrapData.teams?.find((t) => t.id === f.team_a);
+            teamNextFixtures[f.team_h].push({ opp: opp?.short_name || f.team_a, home: true, diff: f.team_h_difficulty });
+          }
+          if (f.team_a) {
+            if (!teamNextFixtures[f.team_a]) teamNextFixtures[f.team_a] = [];
+            const opp = bootstrapData.teams?.find((t) => t.id === f.team_h);
+            teamNextFixtures[f.team_a].push({ opp: opp?.short_name || f.team_h, home: false, diff: f.team_a_difficulty });
+          }
+        }
+      }
     }
     const maxFDR = Math.max(...Object.values(teamFDR), 5);
     const minFDR = Math.min(...Object.values(teamFDR), 1);
     const fdrRange = maxFDR - minFDR || 1;
 
-    // Calculate composite score for each player
+    renderFormExplanation(weights, teamFDR);
+
     const scored = allPlayers.map((p) => {
       const form = (parseFloat(p.form) || 0) / maxForm;
       const fdr = teamFDR[p.team] || 3;
-      const fixture = 1 - ((fdr - minFDR) / fdrRange); // lower FDR = better = higher score
+      const fixture = 1 - ((fdr - minFDR) / fdrRange);
       const xGI = (parseFloat(p.expected_goals) || 0) + (parseFloat(p.expected_assists) || 0);
       const xpts = xGI / maxXPts;
       const mins = (p.minutes || 0) / maxMinutes;
+      const homeaway = form * 0.5 + xpts * 0.5;
 
-      // Home/Away: estimate from total_points and home/away bias
-      // Use selected_by_percent as a proxy for "good away team" (teams with good away records attract more owners)
-      // Actually, just use form + xGI combo as home/away proxy since we can't easily get per-player home/away without element-summary
-      const homeaway = form * 0.5 + xpts * 0.5; // combined proxy
-
-      // Distance: lower is better. Calculate avg away travel for team's remaining fixtures
-      // For simplicity: use team's avg distance to all other PL stadiums
       let avgDist = 0;
       let distCount = 0;
       for (const oppId of Object.keys(TEAM_COORDS).map(Number)) {
         if (oppId === p.team) continue;
-        const d = travelDistance(p.team, oppId);
-        avgDist += d;
+        avgDist += travelDistance(p.team, oppId);
         distCount++;
       }
       avgDist = distCount > 0 ? avgDist / distCount : 0;
-      const maxDist = 400; // rough max avg in PL
-      const distance = 1 - Math.min(avgDist / maxDist, 1);
+      const distance = 1 - Math.min(avgDist / 400, 1);
 
       const composite =
         (weights.form || 0) * form +
@@ -1683,17 +1787,13 @@ async function runSquadBuilder() {
       return { ...p, compositeScore: +composite.toFixed(4), avgAwayDist: Math.round(avgDist) };
     });
 
-    // Greedy squad selection
     const maxPerTeam = 3;
     const limits = { 1: 2, 2: 5, 3: 5, 4: 3 };
     const squad = [];
     const teamCount = {};
 
     for (const pos of [1, 2, 3, 4]) {
-      const candidates = scored
-        .filter((p) => p.element_type === pos && p.now_cost > 0)
-        .sort((a, b) => b.compositeScore - a.compositeScore);
-
+      const candidates = scored.filter((p) => p.element_type === pos && p.now_cost > 0).sort((a, b) => b.compositeScore - a.compositeScore);
       let picked = 0;
       for (const p of candidates) {
         if (picked >= limits[pos]) break;
@@ -1705,8 +1805,7 @@ async function runSquadBuilder() {
       }
     }
 
-    // Upgrade phase
-    const squadBudget = 1000; // max budget for weighted builder
+    const squadBudget = 1000;
     let totalCost = squad.reduce((s, p) => s + p.now_cost, 0);
     let improved = true;
     while (improved) {
@@ -1714,10 +1813,7 @@ async function runSquadBuilder() {
       for (let i = 0; i < squad.length; i++) {
         const cur = squad[i];
         const pos = cur.element_type;
-        const candidates = scored
-          .filter((p) => p.element_type === pos && p.id !== cur.id && p.compositeScore > cur.compositeScore && !squad.find((s) => s.id === p.id))
-          .sort((a, b) => b.compositeScore - a.compositeScore);
-
+        const candidates = scored.filter((p) => p.element_type === pos && p.id !== cur.id && p.compositeScore > cur.compositeScore && !squad.find((s) => s.id === p.id)).sort((a, b) => b.compositeScore - a.compositeScore);
         for (const c of candidates) {
           const costDiff = c.now_cost - cur.now_cost;
           if (costDiff > (squadBudget - totalCost)) continue;
@@ -1735,14 +1831,89 @@ async function runSquadBuilder() {
     }
 
     squadBuilderSquad = squad;
+
+    if (targetGW && teamNextFixtures && Object.keys(teamNextFixtures).length > 0) {
+      const fixtureTeams = [...new Set(squad.map((p) => p.team))];
+      const fixtureEl = document.getElementById("squadbuilder-fixtures");
+      if (fixtureEl) {
+        const diffColor = (d) => d <= 2 ? "var(--green)" : d === 3 ? "var(--yellow)" : "var(--red)";
+        let fhtml = `<h3 style="font-size:0.95rem;margin-bottom:10px;color:var(--text)">${lang === "pl" ? `Terminarz na GW${targetGW}` : `Fixtures for GW${targetGW}`}</h3><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px">`;
+        for (const teamId of fixtureTeams) {
+          const fixtures = teamNextFixtures[teamId] || [];
+          const color = TEAM_COLORS[teamId] || "#555";
+          for (const fx of fixtures) {
+            const vsLabel = fx.home ? `vs ${fx.opp}` : `@ ${fx.opp}`;
+            const badge = fx.home ? "🏠" : "✈️";
+            fhtml += `<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg);border-radius:6px;font-size:0.85rem">
+              <span class="team-color" style="background:${color}"></span>
+              <span style="font-weight:600">${getTeamName(teamId)}</span>
+              <span style="color:${diffColor(fx.diff)};font-weight:700">${badge} ${vsLabel}</span>
+              <span style="color:var(--text-dim);font-size:0.8rem;margin-left:auto">FDR ${fx.diff}</span>
+            </div>`;
+          }
+        }
+        fhtml += `</div>`;
+        fixtureEl.innerHTML = fhtml;
+        fixtureEl.style.display = "";
+      }
+    }
+
     renderSquadBuilder();
     showSection("squadbuilder", "table");
     document.getElementById("squadbuilder-charts").style.display = "";
     renderSquadBuilderCharts();
+    renderSquadBuilderMap();
   } catch {
     document.getElementById("squadbuilder-charts").style.display = "none";
+    document.getElementById("squadbuilder-map-wrap").style.display = "none";
+    document.getElementById("squadbuilder-fixtures").style.display = "none";
     showSection("squadbuilder", "placeholder");
   }
+}
+
+function renderSquadBuilderMap() {
+  const container = document.getElementById("squadbuilder-map");
+  if (!container || squadBuilderSquad.length === 0) return;
+  const mapWrap = document.getElementById("squadbuilder-map-wrap");
+  mapWrap.style.display = "";
+
+  if (squadMap) { squadMap.remove(); squadMap = null; }
+  const map = L.map(container, { scrollWheelZoom: true }).setView([53.0, -1.5], 6);
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+    attribution: '&copy; OSM &copy; CARTO', maxZoom: 18,
+  }).addTo(map);
+
+  const teamIds = [...new Set(squadBuilderSquad.map((p) => p.team))];
+  const posColors = { 1: "#fbbf24", 2: "#3b82f6", 3: "#22c55e", 4: "#ef4444" };
+  const bounds = [];
+
+  for (const tid of teamIds) {
+    const tc = TEAM_COORDS[tid];
+    if (!tc) continue;
+    const marker = L.circleMarker(tc.stadium, {
+      radius: 10, fillColor: TEAM_COLORS[tid] || "#555", color: "#fff", weight: 2, fillOpacity: 0.9,
+    }).addTo(map);
+    const players = squadBuilderSquad.filter((p) => p.team === tid);
+    const plist = players.map((p) => `<span style="color:${posColors[p.element_type]}">${getPositionShort(p.element_type)}</span> ${p.web_name}`).join("<br>");
+    marker.bindPopup(`<div style="font-weight:700;color:${TEAM_COLORS[tid]}">${tc.name}</div><div style="font-size:0.85rem">${plist}</div>`);
+    bounds.push(tc.stadium);
+  }
+
+  for (let i = 0; i < teamIds.length; i++) {
+    for (let j = i + 1; j < teamIds.length; j++) {
+      const t1 = TEAM_COORDS[teamIds[i]];
+      const t2 = TEAM_COORDS[teamIds[j]];
+      if (!t1 || !t2) continue;
+      if (teamIds[i] !== teamIds[j]) {
+        L.polyline([t1.stadium, t2.stadium], { color: "#3b82f6", weight: 1, opacity: 0.3, dashArray: "5 5" }).addTo(map);
+      }
+    }
+  }
+
+  if (bounds.length > 0) {
+    map.fitBounds(bounds, { padding: [30, 30] });
+  }
+  setTimeout(() => map.invalidateSize(), 100);
 }
 
 function renderSquadBuilder() {
@@ -1881,6 +2052,165 @@ function renderSquadScoreChart() {
   </svg>`;
 }
 
+// ===================== STADIUMS =====================
+
+let stadiumsTab = "map";
+
+function initStadiums() {
+  document.getElementById("stadiums-tabs").addEventListener("click", (e) => {
+    const tab = e.target.closest(".tab");
+    if (!tab) return;
+    document.querySelectorAll("#stadiums-tabs .tab").forEach((t) => t.classList.remove("active"));
+    tab.classList.add("active");
+    stadiumsTab = tab.dataset.tab;
+    renderStadiums();
+  });
+}
+
+function renderStadiums() {
+  if (!bootstrapData) return;
+  document.getElementById("stadiums-map-tab").style.display = stadiumsTab === "map" ? "" : "none";
+  document.getElementById("stadiums-regions-tab").style.display = stadiumsTab === "regions" ? "" : "none";
+  document.getElementById("stadiums-distances-tab").style.display = stadiumsTab === "distances" ? "" : "none";
+
+  if (stadiumsTab === "map") renderStadiumsMap();
+  else if (stadiumsTab === "regions") renderStadiumsRegions();
+  else renderStadiumsDistances();
+}
+
+function renderStadiumsMap() {
+  const container = document.getElementById("stadiums-map");
+  if (!container) return;
+
+  if (squadMap) { squadMap.remove(); squadMap = null; }
+  const map = L.map(container, { scrollWheelZoom: true }).setView([53.0, -1.5], 6);
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
+    maxZoom: 18,
+  }).addTo(map);
+
+  const regionColors = { london: "#f59e0b", north: "#3b82f6", midlands: "#a855f7", south: "#22c55e", east: "#ef4444" };
+
+  for (const [id, t] of Object.entries(TEAM_COORDS)) {
+    const tid = parseInt(id);
+    const color = regionColors[t.region] || "#888";
+    const teamColor = TEAM_COLORS[tid] || "#555";
+    const marker = L.circleMarker(t.stadium, {
+      radius: 8, fillColor: teamColor, color: color, weight: 2, fillOpacity: 0.9,
+    }).addTo(map);
+    marker.bindPopup(`<div style="font-weight:700;color:${teamColor}">${t.name}</div><div style="font-size:0.85rem;color:#888">${t.stadiumName}</div><div style="font-size:0.8rem;color:#aaa">${REGIONS[t.region]?.name || t.region}</div>`);
+  }
+
+  const regionLegend = Object.entries(regionColors).map(([k, c]) =>
+    `<span style="display:inline-flex;align-items:center;gap:4px;font-size:0.8rem"><span style="width:10px;height:10px;border-radius:50%;background:${c};display:inline-block"></span>${REGIONS[k]?.name || k}</span>`
+  ).join("  ");
+  const legendDiv = document.createElement("div");
+  legendDiv.innerHTML = `<div style="padding:8px 12px;background:#1a1d27ee;border-radius:6px;position:absolute;bottom:20px;left:20px;z-index:1000;display:flex;gap:12px;flex-wrap:wrap">${regionLegend}</div>`;
+  container.appendChild(legendDiv);
+
+  setTimeout(() => map.invalidateSize(), 100);
+}
+
+function renderStadiumsRegions() {
+  const container = document.getElementById("stadiums-regions-tab");
+  if (!container) return;
+  const lang = getLang();
+
+  let html = `<div class="stadiums-regions-grid">`;
+  for (const [regionKey, region] of Object.entries(REGIONS)) {
+    const teams = region.teams.map((tid) => TEAM_COORDS[tid]).filter(Boolean);
+    const totalDist = [];
+    for (const t of teams) {
+      for (const [oppId, opp] of Object.entries(TEAM_COORDS)) {
+        if (parseInt(oppId) === t) continue;
+        totalDist.push(travelDistance(t, parseInt(oppId)));
+      }
+    }
+    const avgDist = totalDist.length > 0 ? (totalDist.reduce((a, b) => a + b, 0) / totalDist.length).toFixed(0) : 0;
+
+    html += `<div class="region-card">
+      <h3 class="region-title" style="color:var(--accent)">${region.name} (${region.teams.length})</h3>
+      <div style="font-size:0.8rem;color:var(--text-dim);margin-bottom:8px">${lang === "pl" ? "Śr. dystans podróży" : "Avg travel distance"}: ${avgDist} km</div>
+      <div class="region-teams">`;
+    for (const tid of region.teams) {
+      const t = TEAM_COORDS[tid];
+      const color = TEAM_COLORS[tid] || "#555";
+      html += `<div class="region-team"><span class="team-color" style="background:${color}"></span>${t.name} <span style="color:var(--text-dim);font-size:0.8rem">${t.stadiumName}</span></div>`;
+    }
+    html += `</div></div>`;
+  }
+  html += `</div>`;
+  container.innerHTML = html;
+}
+
+function renderStadiumsDistances() {
+  const container = document.getElementById("stadiums-distances-tab");
+  if (!container) return;
+  const lang = getLang();
+  const teamIds = Object.keys(TEAM_COORDS).map(Number);
+
+  const distances = [];
+  for (let i = 0; i < teamIds.length; i++) {
+    for (let j = i + 1; j < teamIds.length; j++) {
+      distances.push({ from: teamIds[i], to: teamIds[j], dist: travelDistance(teamIds[i], teamIds[j]) });
+    }
+  }
+  distances.sort((a, b) => a.dist - b.dist);
+
+  const longest = distances.slice(-5).reverse();
+  const shortest = distances.slice(0, 5);
+
+  let html = `<div class="charts-row">
+    <div class="chart-box"><h3 class="chart-title">${lang === "pl" ? "Najkrótsze dystanse" : "Shortest distances"}</h3>
+      <table><thead><tr><th>${lang === "pl" ? "Z" : "From"}</th><th>${lang === "pl" ? "Do" : "To"}</th><th>km</th></tr></thead><tbody>
+      ${shortest.map((d) => {
+        const c1 = TEAM_COLORS[d.from] || "#555";
+        const c2 = TEAM_COLORS[d.to] || "#555";
+        return `<tr><td><span class="team-color" style="background:${c1}"></span>${TEAM_COORDS[d.from].name}</td><td><span class="team-color" style="background:${c2}"></span>${TEAM_COORDS[d.to].name}</td><td class="stat-val">${d.dist.toFixed(0)}</td></tr>`;
+      }).join("")}
+      </tbody></table>
+    </div>
+    <div class="chart-box"><h3 class="chart-title">${lang === "pl" ? "Najdłuższe dystanse" : "Longest distances"}</h3>
+      <table><thead><tr><th>${lang === "pl" ? "Z" : "From"}</th><th>${lang === "pl" ? "Do" : "To"}</th><th>km</th></tr></thead><tbody>
+      ${longest.map((d) => {
+        const c1 = TEAM_COLORS[d.from] || "#555";
+        const c2 = TEAM_COLORS[d.to] || "#555";
+        return `<tr><td><span class="team-color" style="background:${c1}"></span>${TEAM_COORDS[d.from].name}</td><td><span class="team-color" style="background:${c2}"></span>${TEAM_COORDS[d.to].name}</td><td class="stat-val">${d.dist.toFixed(0)}</td></tr>`;
+      }).join("")}
+      </tbody></table>
+    </div>
+  </div>`;
+
+  const teamDist = {};
+  for (const tid of teamIds) {
+    let total = 0, count = 0;
+    for (const oppId of teamIds) {
+      if (oppId === tid) continue;
+      total += travelDistance(tid, oppId);
+      count++;
+    }
+    teamDist[tid] = count > 0 ? total / count : 0;
+  }
+  const sorted = teamIds.map((t) => ({ t, dist: teamDist[t] })).sort((a, b) => b.dist - a.dist);
+  const maxDist = Math.max(...sorted.map((s) => s.dist), 1);
+  const svgW = 800, padL = 80, padR = 60, chartW = svgW - padL - padR;
+  const barH = 20, svgH = sorted.length * (barH + 3) + 30;
+  let bars = "";
+  sorted.forEach((s, i) => {
+    const y = i * (barH + 3) + 10;
+    const w = (s.dist / maxDist) * chartW;
+    const color = TEAM_COLORS[s.t] || "#555";
+    bars += `<rect x="${padL}" y="${y}" width="${w}" height="${barH}" fill="${color}" rx="3" opacity="0.8"><title>${TEAM_COORDS[s.t].name}: ${s.dist.toFixed(0)} km avg</title></rect>`;
+    bars += `<text x="${padL - 4}" y="${y + barH / 2 + 4}" text-anchor="end" font-size="10" fill="var(--text-dim)">${TEAM_COORDS[s.t].name}</text>`;
+    bars += `<text x="${padL + w + 4}" y="${y + barH / 2 + 4}" font-size="9" fill="var(--text-dim)">${s.dist.toFixed(0)} km</text>`;
+  });
+
+  html += `<div class="chart-box" style="margin-top:16px"><h3 class="chart-title">${lang === "pl" ? "Średni dystans podróży" : "Avg travel distance per team"}</h3>
+    <svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg">${bars}</svg></div>`;
+
+  container.innerHTML = html;
+}
+
 // ===================== NAV =====================
 
 function initNav() {
@@ -1909,8 +2239,9 @@ function initLang() {
       renderNaStart();
       populateKetchupPlayers();
       if (homeAwayData.length > 0) renderHomeAway();
-      if (top15Data.length > 0) renderTop15();
+      if (Object.keys(top15AllData).length > 0) renderTop15Charts();
       if (squadBuilderSquad.length > 0) renderSquadBuilder();
+      renderStadiums();
     }
   });
 }
@@ -2000,5 +2331,6 @@ document.addEventListener("DOMContentLoaded", () => {
   initPriceHistorySearch();
   initTop15();
   initSquadBuilder();
+  initStadiums();
   loadData();
 });

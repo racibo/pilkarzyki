@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>FPL Scout</title>
   <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 </head>
 <body>
   <header class="header">
@@ -31,6 +32,7 @@
     <div class="nav-item" data-page="nastart" data-i18n="nav.naStart">Na start</div>
     <div class="nav-item" data-page="pricehistory" data-i18n="nav.priceHistory">Historia ceny</div>
     <div class="nav-item" data-page="top15" data-i18n="nav.top15">Top 15 kolejki</div>
+    <div class="nav-item" data-page="stadiums" data-i18n="nav.stadiums">Stadiony</div>
   </nav>
 
   <main class="main">
@@ -201,6 +203,13 @@
       <p class="page-desc" data-i18n="squadBuilder.description">Ważony optymalizator — ustaw wagi czynników by stworzyć idealny skład <span class="info-icon" data-i18n-text="squadBuilder.info">i</span></p>
 
       <div class="card" id="squadbuilder-controls">
+        <div class="form-row">
+          <div class="form-group">
+            <label data-i18n="squadBuilder.gameweek">Kolejka docelowa</label>
+            <select id="squadbuilder-gw"></select>
+          </div>
+        </div>
+        <div class="form-explanation" id="squadbuilder-form-explanation" style="display:none"></div>
         <div class="weight-sliders">
           <div class="weight-row">
             <label data-i18n="squadBuilder.weightForm">Forma</label>
@@ -244,6 +253,7 @@
           <div class="placeholder-icon">🔧</div>
           <div data-i18n="squadBuilder.placeholderText">Ustaw wagi czynników i kliknij 'Oblicz'</div>
         </div>
+        <div id="squadbuilder-fixtures" style="display:none"></div>
         <table id="squadbuilder-table" style="display:none">
           <thead>
             <tr>
@@ -269,6 +279,12 @@
               <h3 class="chart-title" data-i18n="squadBuilder.scoreChart">Wynik wagowy zawodników</h3>
               <div id="squadbuilder-score-chart"></div>
             </div>
+          </div>
+        </div>
+        <div id="squadbuilder-map-wrap" style="display:none">
+          <div class="chart-box">
+            <h3 class="chart-title" data-i18n="squadBuilder.mapTitle">Trasy wyjazdowe składu</h3>
+            <div id="squadbuilder-map" style="height:400px;border-radius:var(--radius);overflow:hidden"></div>
           </div>
         </div>
       </div>
@@ -405,13 +421,15 @@
     <!-- TOP 15 -->
     <div class="page" id="page-top15">
       <h1 class="page-title" data-i18n="top15.title">Top 15 kolejki</h1>
-      <p class="page-desc" data-i18n="top15.description">Top 15 zawodników wg punktów i posiadania w danej kolejce <span class="info-icon" data-i18n-text="top15.info">i</span></p>
+      <p class="page-desc" data-i18n="top15.description">Top 15 zawodników wg punktów i posiadania — jak zmieniają się kolejkę po kolejce <span class="info-icon" data-i18n-text="top15.info">i</span></p>
 
       <div class="card" id="top15-controls">
         <div class="form-row">
           <div class="form-group">
-            <label data-i18n="top15.gameweek">Kolejka</label>
-            <select id="top15-gw"></select>
+            <label data-i18n="top15.gwRange">Zakres kolejk</label>
+            <select id="top15-gw-start"></select>
+            <span style="color:var(--text-dim)">→</span>
+            <select id="top15-gw-end"></select>
           </div>
           <button class="btn" id="top15-run" data-i18n="optimizer.calculate">Oblicz</button>
         </div>
@@ -423,10 +441,13 @@
       </div>
 
       <div class="card">
-        <div id="top15-loading" class="loading" style="display:none"><div class="spinner"></div><div data-i18n="common.loading">Ładowanie danych...</div></div>
+        <div id="top15-loading" class="loading" style="display:none"><div class="spinner"></div><div id="top15-loading-text" data-i18n="common.loading">Ładowanie danych...</div></div>
         <div id="top15-placeholder" class="placeholder">
           <div class="placeholder-icon">🏆</div>
-          <div data-i18n="top15.placeholderText">Wybierz kolejkę i kliknij 'Oblicz'</div>
+          <div data-i18n="top15.placeholderText">Wybierz zakres kolejk i kliknij 'Oblicz'</div>
+        </div>
+        <div id="top15-chart-wrap" style="display:none">
+          <div id="top15-chart" class="top15-chart"></div>
         </div>
         <table id="top15-table" style="display:none">
           <thead>
@@ -443,8 +464,29 @@
       </div>
     </div>
 
+    <!-- STADIUMS -->
+    <div class="page" id="page-stadiums">
+      <h1 class="page-title" data-i18n="stadiums.title">Stadiony PL</h1>
+      <p class="page-desc" data-i18n="stadiums.description">Mapa stadionów Premier League — lokalizacje, dystanse i regionalne rankingi <span class="info-icon" data-i18n-text="stadiums.info">i</span></p>
+
+      <div class="tabs" id="stadiums-tabs">
+        <button class="tab active" data-tab="map" data-i18n="stadiums.tabMap">Mapa</button>
+        <button class="tab" data-tab="regions" data-i18n="stadiums.tabRegions">Regiony</button>
+        <button class="tab" data-tab="distances" data-i18n="stadiums.tabDistances">Dystanse</button>
+      </div>
+
+      <div class="card">
+        <div id="stadiums-map-tab">
+          <div id="stadiums-map" style="height:500px;border-radius:var(--radius);overflow:hidden"></div>
+        </div>
+        <div id="stadiums-regions-tab" style="display:none"></div>
+        <div id="stadiums-distances-tab" style="display:none"></div>
+      </div>
+    </div>
+
   </main>
 
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script type="module" src="js/app.js"></script>
 </body>
 </html>
