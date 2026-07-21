@@ -539,7 +539,7 @@ function solveOptimizerFull(budget, allPlayers, maxPerTeam, limits) {
   const byPos = { 1: [], 2: [], 3: [], 4: [] };
   for (const p of allPlayers) byPos[p.element_type]?.push(p);
 
-  // Value-based greedy: pick best pts/m for each slot
+  // Value-based greedy: pick best pts/m for each slot, respecting budget
   const squad = [];
   const teamCount = {};
   const slotsNeeded = { 1: limits[1], 2: limits[2], 3: limits[3], 4: limits[4] };
@@ -555,9 +555,25 @@ function solveOptimizerFull(budget, allPlayers, maxPerTeam, limits) {
       if (picked >= slotsNeeded[pos]) break;
       if (squad.find((s) => s.id === p.id)) continue;
       if ((teamCount[p.team] || 0) >= maxPerTeam) continue;
+      const curCost = squad.reduce((s, x) => s + x.now_cost, 0);
+      if (curCost + p.now_cost > budget) continue; // respect budget
       squad.push({ ...p });
       teamCount[p.team] = (teamCount[p.team] || 0) + 1;
       picked++;
+    }
+    // If couldn't fill slots within budget, try cheapest available
+    if (picked < slotsNeeded[pos]) {
+      const cheapest = byPos[pos]
+        .filter((p) => p.now_cost > 0 && p.total_points > 0 && !squad.find((s) => s.id === p.id) && (teamCount[p.team] || 0) < maxPerTeam)
+        .sort((a, b) => a.now_cost - b.now_cost);
+      for (const p of cheapest) {
+        if (picked >= slotsNeeded[pos]) break;
+        const curCost = squad.reduce((s, x) => s + x.now_cost, 0);
+        if (curCost + p.now_cost > budget) continue;
+        squad.push({ ...p });
+        teamCount[p.team] = (teamCount[p.team] || 0) + 1;
+        picked++;
+      }
     }
   }
 
@@ -1647,6 +1663,7 @@ async function runSquadBuilder() {
     }
 
     // Upgrade phase
+    const squadBudget = 1000; // max budget for weighted builder
     let totalCost = squad.reduce((s, p) => s + p.now_cost, 0);
     let improved = true;
     while (improved) {
@@ -1660,7 +1677,7 @@ async function runSquadBuilder() {
 
         for (const c of candidates) {
           const costDiff = c.now_cost - cur.now_cost;
-          if (costDiff > (1000 - totalCost)) continue;
+          if (costDiff > (squadBudget - totalCost)) continue;
           if (cur.team !== c.team && (teamCount[c.team] || 0) >= maxPerTeam) continue;
           if (cur.team !== c.team) {
             teamCount[cur.team] = (teamCount[cur.team] || 1) - 1;
