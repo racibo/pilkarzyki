@@ -528,7 +528,21 @@ function runOptimizer() {
   const maxPerTeam = 3;
   const limits = { 1: 2, 2: 5, 3: 5, 4: 3 };
 
-  optimizerSquad = solveOptimizerFull(budget, allPlayers, maxPerTeam, limits);
+  const result = solveOptimizerFull(budget, allPlayers, maxPerTeam, limits);
+  optimizerSquad = result.squad;
+
+  if (!result.success) {
+    const lang = getLang();
+    const tbody = document.getElementById("optimizer-body");
+    tbody.innerHTML = `<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--red)">
+      <div style="font-size:1.1rem;font-weight:600;margin-bottom:6px">${lang === "pl" ? "Za mały budżet" : "Budget too low"}</div>
+      <div style="font-size:0.9rem;color:var(--text-dim)">${lang === "pl" ? "Nie udało się wybrać 15 zawodników w tym budżecie. Zwiększ budżet na suwaku." : "Could not select 15 players within this budget. Increase the budget slider."}</div>
+    </td></tr>`;
+    showSection("optimizer", "table");
+    document.getElementById("optimizer-charts").style.display = "none";
+    return;
+  }
+
   renderOptimizer();
   showSection("optimizer", "table");
   document.getElementById("optimizer-charts").style.display = "";
@@ -539,80 +553,82 @@ function solveOptimizerFull(budget, allPlayers, maxPerTeam, limits) {
   const byPos = { 1: [], 2: [], 3: [], 4: [] };
   for (const p of allPlayers) byPos[p.element_type]?.push(p);
 
-  // Value-based greedy: pick best pts/m for each slot, respecting budget
   const squad = [];
   const teamCount = {};
-  const slotsNeeded = { 1: limits[1], 2: limits[2], 3: limits[3], 4: limits[4] };
+  const totalSlots = Object.values(limits).reduce((a, b) => a + b, 0);
 
+  // Phase 1: greedy by total_points, respecting budget
   for (const pos of [1, 2, 3, 4]) {
     const candidates = byPos[pos]
       .filter((p) => p.now_cost > 0 && p.total_points > 0)
-      .map((p) => ({ ...p, ptsPerM: p.total_points / (p.now_cost / 10) }))
-      .sort((a, b) => b.ptsPerM - a.ptsPerM);
+      .sort((a, b) => b.total_points - a.total_points);
 
     let picked = 0;
     for (const p of candidates) {
-      if (picked >= slotsNeeded[pos]) break;
+      if (picked >= limits[pos]) break;
       if (squad.find((s) => s.id === p.id)) continue;
       if ((teamCount[p.team] || 0) >= maxPerTeam) continue;
       const curCost = squad.reduce((s, x) => s + x.now_cost, 0);
-      if (curCost + p.now_cost > budget) continue; // respect budget
+      if (curCost + p.now_cost > budget) continue;
       squad.push({ ...p });
       teamCount[p.team] = (teamCount[p.team] || 0) + 1;
       picked++;
     }
-    // If couldn't fill slots within budget, try cheapest available
-    if (picked < slotsNeeded[pos]) {
-      const cheapest = byPos[pos]
-        .filter((p) => p.now_cost > 0 && p.total_points > 0 && !squad.find((s) => s.id === p.id) && (teamCount[p.team] || 0) < maxPerTeam)
-        .sort((a, b) => a.now_cost - b.now_cost);
-      for (const p of cheapest) {
-        if (picked >= slotsNeeded[pos]) break;
-        const curCost = squad.reduce((s, x) => s + x.now_cost, 0);
-        if (curCost + p.now_cost > budget) continue;
-        squad.push({ ...p });
-        teamCount[p.team] = (teamCount[p.team] || 0) + 1;
-        picked++;
-      }
+  }
+
+  // Phase 2: fill any unfilled slots with cheapest available
+  for (const pos of [1, 2, 3, 4]) {
+    const filled = squad.filter((s) => s.element_type === pos).length;
+    if (filled >= limits[pos]) continue;
+    const need = limits[pos] - filled;
+    const cheapest = byPos[pos]
+      .filter((p) => p.now_cost > 0 && p.total_points > 0 && !squad.find((s) => s.id === p.id) && (teamCount[p.team] || 0) < maxPerTeam)
+      .sort((a, b) => a.now_cost - b.now_cost);
+    let picked = 0;
+    for (const p of cheapest) {
+      if (picked >= need) break;
+      const curCost = squad.reduce((s, x) => s + x.now_cost, 0);
+      if (curCost + p.now_cost > budget) continue;
+      squad.push({ ...p });
+      teamCount[p.team] = (teamCount[p.team] || 0) + 1;
+      picked++;
     }
   }
 
+  // Check if we got all 15
+  const success = squad.length === totalSlots;
+
+  // Phase 3: upgrade — try to swap each slot for a better player within budget
   let totalCost = squad.reduce((s, p) => s + p.now_cost, 0);
+  if (success) {
+    let improved = true;
+    while (improved) {
+      improved = false;
+      for (let i = 0; i < squad.length; i++) {
+        const cur = squad[i];
+        const pos = cur.element_type;
+        const candidates = byPos[pos]
+          .filter((p) => p.id !== cur.id && p.total_points > cur.total_points && !squad.find((s) => s.id === p.id))
+          .sort((a, b) => b.total_points - a.total_points);
 
-  // Upgrade phase: try to swap each slot for a better player within budget
-  let improved = true;
-  while (improved) {
-    improved = false;
-    const remaining = budget - totalCost;
-    for (let i = 0; i < squad.length; i++) {
-      const cur = squad[i];
-      const pos = cur.element_type;
-      // Sort candidates by ptsPerM descending
-      const candidates = byPos[pos]
-        .filter((p) => p.id !== cur.id && p.total_points > cur.total_points && !squad.find((s) => s.id === p.id))
-        .sort((a, b) => {
-          const aVal = a.total_points / Math.max(a.now_cost, 1);
-          const bVal = b.total_points / Math.max(b.now_cost, 1);
-          return bVal - aVal;
-        });
-
-      for (const candidate of candidates) {
-        const costDiff = candidate.now_cost - cur.now_cost;
-        if (costDiff > remaining) continue;
-        if (cur.team !== candidate.team && (teamCount[candidate.team] || 0) >= maxPerTeam) continue;
-        if (cur.team !== candidate.team) {
-          teamCount[cur.team] = (teamCount[cur.team] || 1) - 1;
-          teamCount[candidate.team] = (teamCount[candidate.team] || 0) + 1;
+        for (const candidate of candidates) {
+          const costDiff = candidate.now_cost - cur.now_cost;
+          if (costDiff > (budget - totalCost)) continue;
+          if (cur.team !== candidate.team && (teamCount[candidate.team] || 0) >= maxPerTeam) continue;
+          if (cur.team !== candidate.team) {
+            teamCount[cur.team] = (teamCount[cur.team] || 1) - 1;
+            teamCount[candidate.team] = (teamCount[candidate.team] || 0) + 1;
+          }
+          squad[i] = { ...candidate };
+          totalCost += costDiff;
+          improved = true;
+          break;
         }
-        squad[i] = { ...candidate };
-        totalCost += costDiff;
-        improved = true;
-        break;
       }
     }
   }
 
-  return squad;
+  return { squad, success, budget };
 }
 
 function renderOptimizer() {
@@ -631,6 +647,9 @@ function renderOptimizer() {
   const lang = getLang();
   const posCounts = { 1: 0, 2: 0, 3: 0, 4: 0 };
   sorted.forEach((p) => { posCounts[p.element_type] = (posCounts[p.element_type] || 0) + 1; });
+
+  const budget = parseInt(document.getElementById("optimizer-budget").value);
+  const remaining = ((budget - totalCost) / 10).toFixed(1);
 
   const tbody = document.getElementById("optimizer-body");
   tbody.innerHTML = sorted.map((p, i) => {
@@ -652,7 +671,7 @@ function renderOptimizer() {
   <tr class="optimizer-summary-detail">
     <td colspan="2" style="color:var(--text-dim);font-size:0.82rem">${posCounts[1]}GK · ${posCounts[2]}DEF · ${posCounts[3]}MID · ${posCounts[4]}FWD</td>
     <td colspan="2" style="color:var(--text-dim);font-size:0.82rem">${lang === "pl" ? "Śr. cena" : "Avg price"}: ${avgCost}m · ${lang === "pl" ? "Śr. pkt" : "Avg pts"}: ${avgPts}</td>
-    <td colspan="2" style="color:var(--text-dim);font-size:0.82rem">${lang === "pl" ? "Pozostało" : "Remaining"}: ${((1000 - totalCost) / 10).toFixed(1)}m</td>
+    <td colspan="2" style="color:var(--text-dim);font-size:0.82rem">${lang === "pl" ? "Pozostało" : "Remaining"}: ${remaining}m</td>
   </tr>`;
 }
 
@@ -782,10 +801,10 @@ function solveOptimizer(budget) {
   const allPlayers = bootstrapData.elements.filter((p) => p.minutes > 0 || p.total_points > 0);
   const maxPerTeam = 3;
   const limits = { 1: 2, 2: 5, 3: 5, 4: 3 };
-  const squad = solveOptimizerFull(budget, allPlayers, maxPerTeam, limits);
+  const result = solveOptimizerFull(budget, allPlayers, maxPerTeam, limits);
   return {
-    totalPts: squad.reduce((s, p) => s + p.total_points, 0),
-    totalCost: squad.reduce((s, p) => s + p.now_cost, 0),
+    totalPts: result.squad.reduce((s, p) => s + p.total_points, 0),
+    totalCost: result.squad.reduce((s, p) => s + p.now_cost, 0),
   };
 }
 
