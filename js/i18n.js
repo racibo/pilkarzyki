@@ -82,6 +82,9 @@ export const translations = {
       weightXPts: "xP (oczekiwane pkt)",
       weightMinutes: "Oczekiwane minuty",
       weightDistance: "Dystans podróży gości",
+      avgDist: "Śr. dystans",
+      distChart: "Średni dystans wyjazdowy drużyn",
+      scoreChart: "Wynik wagowy zawodników",
     },
     myTeam: {
       title: "Mój skład",
@@ -229,6 +232,9 @@ export const translations = {
       weightXPts: "xP (expected pts)",
       weightMinutes: "Expected Minutes",
       weightDistance: "Away Travel Distance",
+      avgDist: "Avg distance",
+      distChart: "Average away travel by team",
+      scoreChart: "Weighted player scores",
     },
     myTeam: {
       title: "My Team",

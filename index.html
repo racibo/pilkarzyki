@@ -112,9 +112,9 @@
         <div class="form-row">
           <div class="form-group">
             <label data-i18n="optimizer.budget">Budżet</label>
-            <input type="range" id="optimizer-budget" min="300" max="1000" value="1000" step="10">
+            <input type="range" id="optimizer-budget" min="300" max="650" value="650" step="5">
           </div>
-          <span id="optimizer-budget-display" class="stat-val">100.0</span>
+          <span id="optimizer-budget-display" class="stat-val">65.0</span>
           <button class="btn" id="optimizer-run" data-i18n="optimizer.calculate">Oblicz</button>
         </div>
       </div>
@@ -253,12 +253,24 @@
               <th data-i18n="ketchup.position">Poz</th>
               <th data-sort="now_cost" data-i18n="ketchup.price">Cena</th>
               <th data-sort="total_points" data-i18n="ketchup.totalPts">Pkt</th>
+              <th data-sort="avgAwayDist" data-i18n="squadBuilder.avgDist">Śr. dystans</th>
               <th data-sort="compositeScore" data-i18n="squadBuilder.score">Wynik</th>
             </tr>
           </thead>
           <tbody id="squadbuilder-body"></tbody>
         </table>
-        <div id="squadbuilder-chart" style="display:none"></div>
+        <div id="squadbuilder-charts" style="display:none">
+          <div class="charts-row">
+            <div class="chart-box">
+              <h3 class="chart-title" data-i18n="squadBuilder.distChart">Średni dystans wyjazdowy drużyn</h3>
+              <div id="squadbuilder-dist-chart"></div>
+            </div>
+            <div class="chart-box">
+              <h3 class="chart-title" data-i18n="squadBuilder.scoreChart">Wynik wagowy zawodników</h3>
+              <div id="squadbuilder-score-chart"></div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 

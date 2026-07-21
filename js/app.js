@@ -174,11 +174,13 @@ function showSection(sectionId, state) {
   const table = document.getElementById(`${sectionId}-table`);
   const result = document.getElementById(`${sectionId}-result`);
   const charts = document.getElementById(`${sectionId}-charts`);
+  const chartWrap = document.getElementById(`${sectionId}-chart-wrap`);
   if (loading) loading.style.display = state === "loading" ? "" : "none";
   if (placeholder) placeholder.style.display = state === "placeholder" ? "" : "none";
   if (table) table.style.display = state === "table" ? "" : "none";
   if (charts && state !== "table") charts.style.display = "none";
   if (result && state !== "result") result.style.display = "none";
+  if (chartWrap && state !== "chart") chartWrap.style.display = "none";
 }
 
 async function loadData() {
@@ -608,11 +610,14 @@ function renderOptimizer() {
 
   const totalPts = sorted.reduce((s, p) => s + p.total_points, 0);
   const totalCost = sorted.reduce((s, p) => s + p.now_cost, 0);
+  const avgPts = sorted.length > 0 ? (totalPts / sorted.length).toFixed(1) : 0;
+  const avgCost = sorted.length > 0 ? (totalCost / sorted.length / 10).toFixed(1) : 0;
+  const lang = getLang();
+  const posCounts = { 1: 0, 2: 0, 3: 0, 4: 0 };
+  sorted.forEach((p) => { posCounts[p.element_type] = (posCounts[p.element_type] || 0) + 1; });
 
   const tbody = document.getElementById("optimizer-body");
-  tbody.innerHTML = `<tr><td colspan="6" style="padding:8px 12px;color:var(--accent);font-weight:600">
-    ${t("optimizer.squad")}: ${totalPts} pkt · ${(totalCost / 10).toFixed(1)}m
-  </td></tr>` + sorted.map((p, i) => {
+  tbody.innerHTML = sorted.map((p, i) => {
     const color = TEAM_COLORS[p.team] || "#555";
     const posClass = `pos-${getPositionShort(p.element_type).toLowerCase()}`;
     return `<tr>
@@ -623,7 +628,16 @@ function renderOptimizer() {
       <td class="stat-val">${(p.now_cost / 10).toFixed(1)}</td>
       <td class="stat-val">${p.total_points}</td>
     </tr>`;
-  }).join("");
+  }).join("") + `<tr class="optimizer-summary-row">
+    <td colspan="4" style="font-weight:700;color:var(--accent)">${lang === "pl" ? "Podsumowanie" : "Summary"}</td>
+    <td class="stat-val" style="font-weight:700;color:var(--accent)">${(totalCost / 10).toFixed(1)}m</td>
+    <td class="stat-val" style="font-weight:700;color:var(--accent)">${totalPts}</td>
+  </tr>
+  <tr class="optimizer-summary-detail">
+    <td colspan="2" style="color:var(--text-dim);font-size:0.82rem">${posCounts[1]}GK · ${posCounts[2]}DEF · ${posCounts[3]}MID · ${posCounts[4]}FWD</td>
+    <td colspan="2" style="color:var(--text-dim);font-size:0.82rem">${lang === "pl" ? "Śr. cena" : "Avg price"}: ${avgCost}m · ${lang === "pl" ? "Śr. pkt" : "Avg pts"}: ${avgPts}</td>
+    <td colspan="2" style="color:var(--text-dim);font-size:0.82rem">${lang === "pl" ? "Pozostało" : "Remaining"}: ${((1000 - totalCost) / 10).toFixed(1)}m</td>
+  </tr>`;
 }
 
 function renderOptimizerCharts() {
@@ -683,7 +697,7 @@ function renderBudgetSensitivityChart() {
   const container = document.getElementById("optimizer-chart-budget");
   if (!container || !bootstrapData) return;
 
-  const budgets = [30, 40, 50, 60, 70, 80, 90, 100];
+  const budgets = [30, 35, 40, 45, 50, 55, 60, 65];
   const results = [];
 
   for (const b of budgets) {
@@ -1115,19 +1129,19 @@ async function runPriceHistory() {
   const lang = getLang();
 
   showSection("pricehistory", "loading");
+  // Also hide chart-wrap during loading
+  document.getElementById("pricehistory-chart-wrap").style.display = "none";
 
   try {
     if (season === "current") {
       const summary = await cachedPlayerSummary(priceHistorySelectedId);
       const history = summary.history || [];
       if (history.length === 0) {
-        document.getElementById("pricehistory-loading").style.display = "none";
-        document.getElementById("pricehistory-placeholder").style.display = "";
+        showSection("pricehistory", "placeholder");
         return;
       }
       renderPriceHistoryChartCurrent(history, priceHistorySelectedId);
     } else {
-      const csvData = await fetchVaastavGW(season, 1); // get GW1 for all players
       const player = bootstrapData.elements.find((p) => p.id === priceHistorySelectedId);
       // Try to find by name in CSV
       const playerName = player?.web_name || player?.first_name || "";
@@ -1155,8 +1169,7 @@ async function runPriceHistory() {
         }
       }
       if (allGWData.length === 0) {
-        document.getElementById("pricehistory-loading").style.display = "none";
-        document.getElementById("pricehistory-placeholder").style.display = "";
+        showSection("pricehistory", "placeholder");
         return;
       }
       renderPriceHistoryChartCSV(allGWData, player, season);
@@ -1166,9 +1179,8 @@ async function runPriceHistory() {
     document.getElementById("pricehistory-placeholder").style.display = "none";
     document.getElementById("pricehistory-chart-wrap").style.display = "";
   } catch {
-    document.getElementById("pricehistory-loading").style.display = "none";
+    showSection("pricehistory", "placeholder");
     document.getElementById("pricehistory-chart-wrap").style.display = "none";
-    document.getElementById("pricehistory-placeholder").style.display = "";
   }
 }
 
@@ -1533,7 +1545,7 @@ async function runSquadBuilder() {
 
   showSection("squadbuilder", "loading");
   const loadingEl = document.getElementById("squadbuilder-loading");
-  document.getElementById("squadbuilder-chart").style.display = "none";
+  document.getElementById("squadbuilder-charts").style.display = "none";
 
   try {
     // Fetch fixtures for fixture difficulty
@@ -1609,7 +1621,7 @@ async function runSquadBuilder() {
         (weights.minutes || 0) * mins +
         (weights.distance || 0) * distance;
 
-      return { ...p, compositeScore: +composite.toFixed(4) };
+      return { ...p, compositeScore: +composite.toFixed(4), avgAwayDist: Math.round(avgDist) };
     });
 
     // Greedy squad selection
@@ -1665,10 +1677,10 @@ async function runSquadBuilder() {
     squadBuilderSquad = squad;
     renderSquadBuilder();
     showSection("squadbuilder", "table");
-    document.getElementById("squadbuilder-chart").style.display = "";
-    renderSquadBuilderChart();
+    document.getElementById("squadbuilder-charts").style.display = "";
+    renderSquadBuilderCharts();
   } catch {
-    document.getElementById("squadbuilder-chart").style.display = "none";
+    document.getElementById("squadbuilder-charts").style.display = "none";
     showSection("squadbuilder", "placeholder");
   }
 }
@@ -1687,9 +1699,7 @@ function renderSquadBuilder() {
   const totalCost = sorted.reduce((s, p) => s + p.now_cost, 0);
 
   const tbody = document.getElementById("squadbuilder-body");
-  tbody.innerHTML = `<tr><td colspan="7" style="padding:8px 12px;color:var(--accent);font-weight:600">
-    ${t("optimizer.squad")}: ${totalPts} pkt · ${(totalCost / 10).toFixed(1)}m
-  </td></tr>` + sorted.map((p, i) => {
+  tbody.innerHTML = sorted.map((p, i) => {
     const color = TEAM_COLORS[p.team] || "#555";
     const posClass = `pos-${getPositionShort(p.element_type).toLowerCase()}`;
     return `<tr>
@@ -1699,13 +1709,71 @@ function renderSquadBuilder() {
       <td><span class="pos-badge ${posClass}">${getPositionShort(p.element_type)}</span></td>
       <td class="stat-val">${(p.now_cost / 10).toFixed(1)}</td>
       <td class="stat-val">${p.total_points}</td>
+      <td class="stat-val" style="color:var(--text-dim)">${p.avgAwayDist || 0} km</td>
       <td class="stat-val" style="color:var(--accent)">${p.compositeScore.toFixed(3)}</td>
     </tr>`;
-  }).join("");
+  }).join("") + `<tr class="optimizer-summary-row">
+    <td colspan="5" style="font-weight:700;color:var(--accent)">${lang === "pl" ? "Podsumowanie" : "Summary"}</td>
+    <td class="stat-val" style="font-weight:700;color:var(--accent)">${totalPts}</td>
+    <td class="stat-val" style="font-weight:600">${(sorted.reduce((s, p) => s + (p.avgAwayDist || 0), 0) / Math.max(sorted.length, 1)).toFixed(0)} km</td>
+    <td class="stat-val" style="font-weight:700;color:var(--accent)">${(totalCost / 10).toFixed(1)}m</td>
+  </tr>`;
 }
 
-function renderSquadBuilderChart() {
-  const container = document.getElementById("squadbuilder-chart");
+function renderSquadBuilderCharts() {
+  renderSquadDistChart();
+  renderSquadScoreChart();
+}
+
+function renderSquadDistChart() {
+  const container = document.getElementById("squadbuilder-dist-chart");
+  if (!container || !bootstrapData) return;
+  const lang = getLang();
+
+  // Average away distance per team
+  const teamDist = {};
+  const teamIds = Object.keys(TEAM_COORDS).map(Number);
+  for (const tid of teamIds) {
+    let total = 0, count = 0;
+    for (const oppId of teamIds) {
+      if (oppId === tid) continue;
+      total += travelDistance(tid, oppId);
+      count++;
+    }
+    teamDist[tid] = count > 0 ? total / count : 0;
+  }
+
+  const teams = teamIds
+    .map((tid) => ({ tid, name: getTeamName(tid), dist: teamDist[tid], color: TEAM_COLORS[tid] || "#555" }))
+    .sort((a, b) => b.dist - a.dist);
+
+  const maxDist = Math.max(...teams.map((t) => t.dist), 1);
+  const svgW = 800;
+  const svgH = Math.max(300, teams.length * 22 + 40);
+  const pad = { top: 10, right: 30, bottom: 20, left: 70 };
+  const chartW = svgW - pad.left - pad.right;
+  const chartH = svgH - pad.top - pad.bottom;
+  const barH = Math.floor(chartH / teams.length) - 2;
+
+  let bars = "";
+  teams.forEach((t, i) => {
+    const y = pad.top + i * (barH + 2);
+    const w = (t.dist / maxDist) * chartW;
+    bars += `<rect x="${pad.left}" y="${y}" width="${w}" height="${barH}" fill="${t.color}" rx="2" opacity="0.75">
+      <title>${t.name}: ${t.dist.toFixed(0)} km</title>
+    </rect>`;
+    bars += `<text x="${pad.left - 4}" y="${y + barH / 2 + 4}" text-anchor="end" font-size="10" fill="var(--text-dim)" font-family="sans-serif">${t.name}</text>`;
+    bars += `<text x="${pad.left + w + 4}" y="${y + barH / 2 + 4}" text-anchor="start" font-size="9" fill="var(--text-dim)" font-family="sans-serif">${t.dist.toFixed(0)} km</text>`;
+  });
+
+  container.innerHTML = `<svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg">
+    <line class="chart-axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + chartH}"/>
+    ${bars}
+  </svg>`;
+}
+
+function renderSquadScoreChart() {
+  const container = document.getElementById("squadbuilder-score-chart");
   if (!container || squadBuilderSquad.length === 0) return;
 
   const sorted = [...squadBuilderSquad].sort((a, b) => b.compositeScore - a.compositeScore);
@@ -1745,15 +1813,12 @@ function renderSquadBuilderChart() {
     if (i > 0) yTicks += `<line class="chart-grid" x1="${pad.left}" y1="${y}" x2="${pad.left + chartW}" y2="${y}"/>`;
   }
 
-  container.innerHTML = `
-    <h3 class="chart-title" style="margin:16px 0 8px">${lang === "pl" ? "Wynik wagowy zawodników" : "Weighted player scores"}</h3>
-    <svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg">
-      <line class="chart-axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + chartH}"/>
-      <line class="chart-axis" x1="${pad.left}" y1="${pad.top + chartH}" x2="${pad.left + chartW}" y2="${pad.top + chartH}"/>
-      ${yTicks}
-      ${bars}
-    </svg>
-  `;
+  container.innerHTML = `<svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg">
+    <line class="chart-axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + chartH}"/>
+    <line class="chart-axis" x1="${pad.left}" y1="${pad.top + chartH}" x2="${pad.left + chartW}" y2="${pad.top + chartH}"/>
+    ${yTicks}
+    ${bars}
+  </svg>`;
 }
 
 // ===================== NAV =====================
