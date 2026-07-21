@@ -1,5 +1,6 @@
-import { getBootstrapStatic, getPlayerSummary, getManagerPicks, getLeagueStandings } from "./api.js";
+import { getBootstrapStatic, getPlayerSummary, getManagerPicks, getLeagueStandings, getFixtures, fetchVaastavGW } from "./api.js";
 import { t, setLang, getLang } from "./i18n.js";
+import { TEAM_COORDS, travelDistance } from "./stadiums.js";
 
 let bootstrapData = null;
 let currentRankingsTab = "gk";
@@ -7,6 +8,7 @@ let currentRankingsSort = { field: "totalPoints", dir: "desc" };
 let homeAwaySort = { field: "diff", dir: "desc" };
 let homeAwayData = [];
 let myTeamData = null;
+let naStartSort = { field: "ptsPerCost", dir: "desc" };
 
 const TEAM_COLORS = {
   1: "#e30613", 2: "#0057a8", 3: "#ee2737", 4: "#6c1d45",
@@ -28,32 +30,78 @@ function getPositionShort(type) {
 // ===================== LOCAL STORAGE CACHE =====================
 
 const LS_PREFIX = "fpl-cache";
+const LS_VERSION = 3;
 const LS_TTL = { bootstrap: 60 * 60 * 1000, element: 30 * 60 * 1000 };
+
+// Clear stale cache from older versions
+(function clearStaleCache() {
+  const ver = parseInt(localStorage.getItem(`${LS_PREFIX}-ver`) || "0");
+  if (ver < LS_VERSION) {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(LS_PREFIX)) keys.push(k);
+    }
+    keys.forEach((k) => localStorage.removeItem(k));
+    localStorage.setItem(`${LS_PREFIX}-ver`, String(LS_VERSION));
+  }
+})();
 
 function lsGet(key) {
   try {
     const raw = localStorage.getItem(`${LS_PREFIX}-${key}`);
     if (!raw) return null;
-    const entry = JSON.parse(raw);
-    return entry;
+    return JSON.parse(raw);
   } catch { return null; }
 }
 
 function lsSet(key, data, ttlMs) {
   try {
     localStorage.setItem(`${LS_PREFIX}-${key}`, JSON.stringify({ data, ts: Date.now(), ttl: ttlMs }));
-  } catch { /* quota exceeded, ignore */ }
+    return true;
+  } catch { return false; }
 }
 
 function lsValid(entry) {
   return entry && entry.data && entry.ts && Date.now() - entry.ts < (entry.ttl || Infinity);
 }
 
+function compressBootstrap(data) {
+  return {
+    events: data.events,
+    game_settings: data.game_settings,
+    teams: data.teams,
+    element_types: data.element_types,
+    elements: data.elements.map((p) => ({
+      id: p.id, web_name: p.web_name, team: p.team, element_type: p.element_type,
+      total_points: p.total_points, now_cost: p.now_cost, minutes: p.minutes,
+      goals_scored: p.goals_scored, assists: p.assists, clean_sheets: p.clean_sheets,
+      form: p.form, ict_index: p.ict_index, selected_by_percent: p.selected_by_percent,
+      expected_goals: p.expected_goals, expected_assists: p.expected_assists,
+      points_per_game: p.points_per_game, bonus: p.bonus,
+    })),
+  };
+}
+
+function updateCacheStatus(data, fromCache) {
+  const el = document.getElementById("cache-status");
+  if (!el) return;
+  const lang = getLang();
+  const icon = fromCache ? "💾" : "🌐";
+  const label = fromCache ? (lang === "pl" ? "Z cache" : "From cache") : (lang === "pl" ? "Świeże dane" : "Fresh data");
+  el.textContent = `${icon} ${label}`;
+}
+
 async function cachedBootstrap() {
   const cached = lsGet("bootstrap");
-  if (lsValid(cached)) return cached.data;
-  const data = await getBootstrapStatic();
+  if (lsValid(cached)) {
+    updateCacheStatus(cached.data, true);
+    return cached.data;
+  }
+  const raw = await getBootstrapStatic();
+  const data = compressBootstrap(raw);
   lsSet("bootstrap", data, LS_TTL.bootstrap);
+  updateCacheStatus(data, false);
   return data;
 }
 
@@ -61,8 +109,20 @@ async function cachedPlayerSummary(id) {
   const cached = lsGet(`elem-${id}`);
   if (lsValid(cached)) return cached.data;
   const data = await getPlayerSummary(id);
-  lsSet(`elem-${id}`, data, LS_TTL.element);
-  return data;
+  // Compress: keep only history we need
+  const compressed = {
+    history: (data.history || []).map((h) => ({
+      round: h.round, total_points: h.total_points, was_home: h.was_home,
+      goals_scored: h.goals_scored, assists: h.assists,
+      expected_goals: h.expected_goals, expected_assists: h.expected_assists,
+      expected_goal_involvements: h.expected_goal_involvements,
+      minutes: h.minutes,
+      value: h.value,
+    })),
+    history_past: data.history_past,
+  };
+  lsSet(`elem-${id}`, compressed, LS_TTL.element);
+  return compressed;
 }
 
 // ===================== SEASON =====================
@@ -101,6 +161,11 @@ function applyTranslations() {
     const val = t(key);
     if (val !== key) el.textContent = val;
   });
+  document.querySelectorAll("[data-i18n-text]").forEach((el) => {
+    const key = el.dataset.i18nText;
+    const val = t(key);
+    if (val !== key) el.setAttribute("data-i18n-text", val);
+  });
 }
 
 function showSection(sectionId, state) {
@@ -108,9 +173,11 @@ function showSection(sectionId, state) {
   const placeholder = document.getElementById(`${sectionId}-placeholder`);
   const table = document.getElementById(`${sectionId}-table`);
   const result = document.getElementById(`${sectionId}-result`);
+  const charts = document.getElementById(`${sectionId}-charts`);
   if (loading) loading.style.display = state === "loading" ? "" : "none";
   if (placeholder) placeholder.style.display = state === "placeholder" ? "" : "none";
   if (table) table.style.display = state === "table" ? "" : "none";
+  if (charts && state !== "table") charts.style.display = "none";
   if (result && state !== "result") result.style.display = "none";
 }
 
@@ -121,6 +188,8 @@ async function loadData() {
     updateSeasonBanner(bootstrapData);
     renderRankings();
     renderNaStart();
+    populateKetchupPlayers();
+    populateTop15GWs();
   } catch (err) {
     const body = document.getElementById("rankings-body");
     body.innerHTML = `<tr><td colspan="5"><div class="error-msg">${t("common.error")}: ${err.message}</div></td></tr>`;
@@ -172,77 +241,277 @@ function renderRankings() {
   }).join("");
 }
 
-// ===================== KETCHUP =====================
+// ===================== FORMA vs OCZEKIWANIA =====================
+
+let ketchupSelectedId = null;
+let ketchupPlayersList = [];
+
+function populateKetchupPlayers() {
+  if (!bootstrapData) return;
+  const lang = getLang();
+  ketchupPlayersList = bootstrapData.elements
+    .filter((p) => p.minutes > 0)
+    .sort((a, b) => b.total_points - a.total_points)
+    .map((p) => ({
+      id: p.id,
+      name: p.web_name,
+      team: getTeamName(p.team),
+      pos: getPositionShort(p.element_type),
+      pts: p.total_points,
+    }));
+}
+
+function initKetchupSearch() {
+  const input = document.getElementById("ketchup-search");
+  const results = document.getElementById("ketchup-results");
+  if (!input || !results) return;
+
+  let activeIdx = -1;
+
+  function renderResults(query) {
+    const q = query.trim().toLowerCase();
+    if (q.length < 1) { results.classList.remove("open"); return; }
+
+    const matches = ketchupPlayersList.filter((p) =>
+      p.name.toLowerCase().includes(q) || p.team.toLowerCase().includes(q)
+    ).slice(0, 20);
+
+    if (matches.length === 0) { results.classList.remove("open"); return; }
+
+    activeIdx = -1;
+    results.innerHTML = matches.map((p, i) => {
+      const highlighted = p.name.replace(new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi"), "<mark>$1</mark>");
+      return `<div class="player-result-item" data-id="${p.id}" data-idx="${i}">
+        <span class="result-name">${highlighted}</span>
+        <span class="result-meta">${p.team} ${p.pos} · ${p.pts} pkt</span>
+      </div>`;
+    }).join("");
+    results.classList.add("open");
+  }
+
+  function selectPlayer(id) {
+    const player = ketchupPlayersList.find((p) => p.id === id);
+    if (!player) return;
+    input.value = `${player.name} (${player.team} ${player.pos})`;
+    results.classList.remove("open");
+    ketchupSelectedId = id;
+    runKetchup();
+  }
+
+  input.addEventListener("input", (e) => renderResults(e.target.value));
+
+  input.addEventListener("keydown", (e) => {
+    const items = results.querySelectorAll(".player-result-item");
+    if (!items.length) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      activeIdx = Math.min(activeIdx + 1, items.length - 1);
+      items.forEach((el, i) => el.classList.toggle("active", i === activeIdx));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      activeIdx = Math.max(activeIdx - 1, 0);
+      items.forEach((el, i) => el.classList.toggle("active", i === activeIdx));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (activeIdx >= 0 && activeIdx < items.length) {
+        selectPlayer(parseInt(items[activeIdx].dataset.id));
+      }
+    } else if (e.key === "Escape") {
+      results.classList.remove("open");
+    }
+  });
+
+  results.addEventListener("click", (e) => {
+    const item = e.target.closest(".player-result-item");
+    if (item) selectPlayer(parseInt(item.dataset.id));
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".player-search")) results.classList.remove("open");
+  });
+
+  input.addEventListener("focus", () => {
+    if (input.value.length >= 1) renderResults(input.value);
+  });
+}
 
 async function runKetchup() {
   if (!bootstrapData) return;
+  if (!ketchupSelectedId) return;
+
   const gwCount = parseInt(document.getElementById("ketchup-gw-count").value);
   const allGWs = bootstrapData.events || [];
   const finishedGWs = allGWs.filter((e) => e.finished);
   const lastGW = finishedGWs.length > 0 ? finishedGWs[finishedGWs.length - 1] : allGWs[allGWs.length - 1];
-  const currentGW = lastGW?.id || 38;
-  const startGW = Math.max(1, currentGW - gwCount + 1);
+  const maxGW = lastGW?.id || 38;
+  const startGW = Math.max(1, maxGW - gwCount + 1);
 
   showSection("ketchup", "loading");
-  const loadingEl = document.getElementById("ketchup-loading");
+
+  try {
+    const summary = await cachedPlayerSummary(ketchupSelectedId);
+    const history = summary.history || [];
+    const relevant = history
+      .filter((h) => h.round >= startGW && h.round <= maxGW)
+      .sort((a, b) => a.round - b.round);
+
+    if (relevant.length === 0) {
+      document.getElementById("ketchup-placeholder").style.display = "";
+      document.getElementById("ketchup-chart-wrap").style.display = "none";
+      showSection("ketchup", "placeholder");
+      return;
+    }
+
+    const player = bootstrapData.elements.find((p) => p.id === ketchupSelectedId);
+    renderKetchupChart(player, relevant, startGW, maxGW);
+    showSection("ketchup", "table");
+    document.getElementById("ketchup-chart-wrap").style.display = "";
+    document.getElementById("ketchup-placeholder").style.display = "none";
+  } catch (err) {
+    document.getElementById("ketchup-placeholder").style.display = "";
+    document.getElementById("ketchup-chart-wrap").style.display = "none";
+    showSection("ketchup", "placeholder");
+  }
+}
+
+function renderKetchupChart(player, data, startGW, maxGW) {
   const lang = getLang();
+  const color = TEAM_COLORS[player.team] || "#555";
+  const posClass = `pos-${getPositionShort(player.element_type).toLowerCase()}`;
 
-  const candidates = bootstrapData.elements.filter((p) => p.minutes > 0 && p.element_type !== 1);
-  const results = [];
-  const total = candidates.length;
+  // Player info
+  const infoEl = document.getElementById("ketchup-player-info");
+  infoEl.innerHTML = `
+    <span class="team-color" style="background:${color};width:6px;height:28px;border-radius:3px;display:inline-block"></span>
+    <span class="player-name">${player.web_name}</span>
+    <span class="player-team">${getTeamName(player.team)}</span>
+    <span class="pos-badge ${posClass}">${getPositionShort(player.element_type)}</span>
+    <span style="color:var(--text-dim);font-size:0.85rem">${(player.now_cost / 10).toFixed(1)}m · ${player.total_points} pkt</span>
+  `;
 
-  for (let i = 0; i < total; i++) {
-    const p = candidates[i];
-    if (i % 10 === 0 && loadingEl) {
-      const inner = loadingEl.querySelector("div:last-child");
-      if (inner) inner.textContent = `${lang === "pl" ? "Pobieranie" : "Fetching"} ${i + 1}/${total}...`;
+  // Convert xGI to FPL points: xG*5 + xA*3 (approximate FPL scoring)
+  const dataWithXP = data.map((d) => {
+    const xGI = parseFloat(d.expected_goal_involvements) || 0;
+    const xPts = xGI * 4; // average ~4 pts per goal involvement (blended 5+3)
+    return {
+      ...d,
+      xPts: +xPts.toFixed(2),
+      gaActual: (d.goals_scored || 0) + (d.assists || 0),
+    };
+  });
+
+  // Chart
+  const svgW = 800;
+  const svgH = 320;
+  const pad = { top: 30, right: 20, bottom: 40, left: 50 };
+  const chartW = svgW - pad.left - pad.right;
+  const chartH = svgH - pad.top - pad.bottom;
+
+  const allPts = dataWithXP.map((d) => d.total_points);
+  const allXPts = dataWithXP.map((d) => d.xPts);
+  const maxVal = Math.max(...allPts, ...allXPts, 1);
+
+  let actualPath = "";
+  let xpPath = "";
+  let actualDots = "";
+  let xpDots = "";
+  let xLabels = "";
+
+  const XP_COLOR = "#a855f7";
+
+  dataWithXP.forEach((d, i) => {
+    const x = pad.left + (i / Math.max(dataWithXP.length - 1, 1)) * chartW;
+    const yActual = pad.top + chartH - (d.total_points / maxVal) * chartH;
+    const yXP = pad.top + chartH - (d.xPts / maxVal) * chartH;
+
+    if (i === 0) {
+      actualPath = `M ${x} ${yActual}`;
+      xpPath = `M ${x} ${yXP}`;
+    } else {
+      actualPath += ` L ${x} ${yActual}`;
+      xpPath += ` L ${x} ${yXP}`;
     }
-    try {
-      const summary = await cachedPlayerSummary(p.id);
-      const history = summary.history || [];
-      const relevant = history.filter((h) => h.round >= startGW && h.round <= currentGW);
-      if (relevant.length === 0) continue;
 
-      const totalActual = relevant.reduce((s, h) => s + h.total_points, 0);
-      const totalExpected = relevant.reduce((s, h) => s + (parseFloat(h.expected_goals) || 0) + (parseFloat(h.expected_assists) || 0), 0);
-      const diff = totalExpected - totalActual;
+    actualDots += `<circle cx="${x}" cy="${yActual}" r="4" fill="#3b82f6" stroke="var(--bg-card)" stroke-width="2">
+      <title>GW${d.round}: ${d.total_points} pkt (${d.goals_scored || 0}G ${d.assists || 0}A)</title>
+    </circle>`;
 
-      results.push({
-        id: p.id,
-        web_name: p.web_name,
-        team: p.team,
-        element_type: p.element_type,
-        now_cost: p.now_cost,
-        totalPts: totalActual,
-        expectedPts: +totalExpected.toFixed(1),
-        diff: +diff.toFixed(1),
-        gamesPlayed: relevant.length,
-      });
-    } catch {
-      // skip
-    }
+    xpDots += `<circle cx="${x}" cy="${yXP}" r="4" fill="${XP_COLOR}" stroke="var(--bg-card)" stroke-width="2">
+      <title>GW${d.round}: ~${d.xPts.toFixed(1)} pkt (xP)</title>
+    </circle>`;
+
+    xLabels += `<text class="chart-label" x="${x}" y="${pad.top + chartH + 18}" text-anchor="middle" font-size="10">${d.round}</text>`;
+  });
+
+  // Y axis
+  let yTicks = "";
+  const ySteps = 5;
+  for (let i = 0; i <= ySteps; i++) {
+    const val = (maxVal / ySteps) * i;
+    const y = pad.top + chartH - (chartH / ySteps) * i;
+    yTicks += `<text class="chart-label" x="${pad.left - 6}" y="${y + 3}" text-anchor="end" font-size="10">${Math.round(val)}</text>`;
+    yTicks += `<line class="chart-grid" x1="${pad.left}" y1="${y}" x2="${pad.left + chartW}" y2="${y}"/>`;
   }
 
-  const sortBy = document.getElementById("ketchup-sort").value;
-  results.sort((a, b) => (sortBy === "diff" ? b.diff - a.diff : b.expectedPts - a.expectedPts));
+  const chartEl = document.getElementById("ketchup-chart");
+  chartEl.innerHTML = `<svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg">
+    <line class="chart-axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + chartH}"/>
+    <line class="chart-axis" x1="${pad.left}" y1="${pad.top + chartH}" x2="${pad.left + chartW}" y2="${pad.top + chartH}"/>
+    ${yTicks}
+    ${xLabels}
+    <path class="chart-line" d="${actualPath}" stroke="#3b82f6"/>
+    <path class="chart-line" d="${xpPath}" stroke="${XP_COLOR}" stroke-dasharray="6 3"/>
+    ${actualDots}
+    ${xpDots}
+    <text x="${pad.left + chartW - 10}" y="${pad.top + 12}" text-anchor="end" font-size="11" fill="#3b82f6" font-weight="600" font-family="sans-serif">● ${lang === "pl" ? "Pkt rzeczywiste" : "Actual pts"}</text>
+    <text x="${pad.left + chartW - 10}" y="${pad.top + 26}" text-anchor="end" font-size="11" fill="${XP_COLOR}" font-weight="600" font-family="sans-serif">- - xP</text>
+  </svg>`;
 
-  const tbody = document.getElementById("ketchup-body");
-  tbody.innerHTML = results.slice(0, 40).map((r, i) => {
-    const color = TEAM_COLORS[r.team] || "#555";
-    const posClass = `pos-${getPositionShort(r.element_type).toLowerCase()}`;
-    return `<tr>
-      <td class="rank-num">${i + 1}</td>
-      <td>${r.web_name}</td>
-      <td><span class="team-color" style="background:${color}"></span>${getTeamName(r.team)}</td>
-      <td><span class="pos-badge ${posClass}">${getPositionShort(r.element_type)}</span></td>
-      <td class="stat-val">${(r.now_cost / 10).toFixed(1)}</td>
-      <td class="stat-val">${r.totalPts}</td>
-      <td class="stat-val">${r.expectedPts}</td>
-      <td class="stat-val" style="color:${r.diff > 0 ? 'var(--green)' : 'var(--red)'}">${r.diff > 0 ? '+' : ''}${r.diff}</td>
-    </tr>`;
-  }).join("");
+  // Summary stats
+  const totalActual = dataWithXP.reduce((s, d) => s + d.total_points, 0);
+  const totalXPts = dataWithXP.reduce((s, d) => s + d.xPts, 0);
+  const totalGoals = dataWithXP.reduce((s, d) => s + (d.goals_scored || 0), 0);
+  const totalAssists = dataWithXP.reduce((s, d) => s + (d.assists || 0), 0);
+  const diff = totalActual - totalXPts;
+  const overperformers = dataWithXP.filter((d) => d.total_points > d.xPts).length;
+  const underperformers = dataWithXP.filter((d) => d.total_points < d.xPts).length;
 
-  showSection("ketchup", "table");
+  const sumEl = document.getElementById("ketchup-summary");
+  const iPl = (tip) => `<span class="info-icon stat-info" data-i18n-text="${tip}">i</span>`;
+  const tipTotal = lang === "pl" ? "Suma wszystkich zdobytych punktów FPL w wybranych kolejkach" : "Sum of all FPL points scored in selected gameweeks";
+  const tipExpected = lang === "pl" ? "Suma oczekiwanych punktów (xP) na podstawie modelu xG. xP to oczekiwane zaangażowanie w gole (xG + xA) przeliczone na przybliżone punkty FPL (~4 pkt za involvement)" : "Sum of expected points (xP) based on the xG model. xP is expected goal involvements (xG + xA) converted to approximate FPL pts (~4 pts per involvement)";
+  const tipDiff = lang === "pl" ? "Różnica między rzeczywistymi a oczekiwanymi pkt. Dodatnia = zawodnik gra lepiej niż wskazuje xP (niedoszacowany). Ujemna = gra gorzej (przeszacowany)" : "Difference between actual and expected pts. Positive = player overperforming xP (undervalued). Negative = underperforming (overvalued)";
+  const tipGA = lang === "pl" ? "Łączna liczba goli (G) i asyst (A) w wybranych kolejkach" : "Total goals (G) and assists (A) in selected gameweeks";
+  const tipXP = lang === "pl" ? "Expected Points — oczekiwane punkty na podstawie modelu xG. Suma xG (oczekiwane gole) i xA (oczekiwane asysty) przeliczone na punkty FPL" : "Expected Points — expected points based on the xG model. Sum of xG (expected goals) and xA (expected assists) converted to FPL points";
+  const tipOver = lang === "pl" ? "Liczba kolejkach w których zawodnik zdobył więcej pkt niż oczekiwano (ponad xP)" : "Number of gameweeks where player scored more pts than expected (over xP)";
+  const tipUnder = lang === "pl" ? "Liczba kolejkach w których zawodnik zdobył mniej pkt niż oczekiwano (poniżej xP)" : "Number of gameweeks where player scored fewer pts than expected (under xP)";
+
+  sumEl.innerHTML = `
+    <div class="ketchup-stat">
+      <div class="ketchup-stat-val" style="color:var(--accent)">${totalActual}</div>
+      <div class="ketchup-stat-label">${lang === "pl" ? "Łącznie pkt" : "Total pts"}${iPl(tipTotal)}</div>
+    </div>
+    <div class="ketchup-stat">
+      <div class="ketchup-stat-val" style="color:var(--yellow)">${totalXPts.toFixed(1)}</div>
+      <div class="ketchup-stat-label">xP${iPl(tipExpected)}</div>
+    </div>
+    <div class="ketchup-stat">
+      <div class="ketchup-stat-val" style="color:${diff >= 0 ? 'var(--green)' : 'var(--red)'}">${diff >= 0 ? '+' : ''}${diff.toFixed(1)}</div>
+      <div class="ketchup-stat-label">${lang === "pl" ? "Różnica" : "Diff"}${iPl(tipDiff)}</div>
+    </div>
+    <div class="ketchup-stat">
+      <div class="ketchup-stat-val">${totalGoals}G ${totalAssists}A</div>
+      <div class="ketchup-stat-label">${lang === "pl" ? "Gole / Asysty" : "Goals / Assists"}${iPl(tipGA)}</div>
+    </div>
+    <div class="ketchup-stat">
+      <div class="ketchup-stat-val" style="color:var(--green)">${overperformers}</div>
+      <div class="ketchup-stat-label">${lang === "pl" ? "Ponad xP" : "Over xP"}${iPl(tipOver)}</div>
+    </div>
+    <div class="ketchup-stat">
+      <div class="ketchup-stat-val" style="color:var(--red)">${underperformers}</div>
+      <div class="ketchup-stat-label">${lang === "pl" ? "Poniżej xP" : "Under xP"}${iPl(tipUnder)}</div>
+    </div>
+  `;
 }
 
 // ===================== OPTIMIZER =====================
@@ -257,21 +526,32 @@ function runOptimizer() {
   const maxPerTeam = 3;
   const limits = { 1: 2, 2: 5, 3: 5, 4: 3 };
 
+  optimizerSquad = solveOptimizerFull(budget, allPlayers, maxPerTeam, limits);
+  renderOptimizer();
+  showSection("optimizer", "table");
+  document.getElementById("optimizer-charts").style.display = "";
+  renderOptimizerCharts();
+}
+
+function solveOptimizerFull(budget, allPlayers, maxPerTeam, limits) {
   const byPos = { 1: [], 2: [], 3: [], 4: [] };
   for (const p of allPlayers) byPos[p.element_type]?.push(p);
-  for (const pos of Object.keys(byPos)) {
-    byPos[pos].sort((a, b) => b.total_points - a.total_points);
-  }
 
+  // Value-based greedy: pick best pts/m for each slot
   const squad = [];
   const teamCount = {};
+  const slotsNeeded = { 1: limits[1], 2: limits[2], 3: limits[3], 4: limits[4] };
 
-  // Phase 1: cheapest at each position
   for (const pos of [1, 2, 3, 4]) {
-    const sorted = [...byPos[pos]].sort((a, b) => a.now_cost - b.now_cost);
+    const candidates = byPos[pos]
+      .filter((p) => p.now_cost > 0 && p.total_points > 0)
+      .map((p) => ({ ...p, ptsPerM: p.total_points / (p.now_cost / 10) }))
+      .sort((a, b) => b.ptsPerM - a.ptsPerM);
+
     let picked = 0;
-    for (const p of sorted) {
-      if (picked >= limits[pos]) break;
+    for (const p of candidates) {
+      if (picked >= slotsNeeded[pos]) break;
+      if (squad.find((s) => s.id === p.id)) continue;
       if ((teamCount[p.team] || 0) >= maxPerTeam) continue;
       squad.push({ ...p });
       teamCount[p.team] = (teamCount[p.team] || 0) + 1;
@@ -281,7 +561,7 @@ function runOptimizer() {
 
   let totalCost = squad.reduce((s, p) => s + p.now_cost, 0);
 
-  // Phase 2: upgrade within budget
+  // Upgrade phase: try to swap each slot for a better player within budget
   let improved = true;
   while (improved) {
     improved = false;
@@ -289,12 +569,18 @@ function runOptimizer() {
     for (let i = 0; i < squad.length; i++) {
       const cur = squad[i];
       const pos = cur.element_type;
-      for (const candidate of byPos[pos]) {
-        if (candidate.id === cur.id) continue;
-        if (squad.find((s) => s.id === candidate.id)) continue;
+      // Sort candidates by ptsPerM descending
+      const candidates = byPos[pos]
+        .filter((p) => p.id !== cur.id && p.total_points > cur.total_points && !squad.find((s) => s.id === p.id))
+        .sort((a, b) => {
+          const aVal = a.total_points / Math.max(a.now_cost, 1);
+          const bVal = b.total_points / Math.max(b.now_cost, 1);
+          return bVal - aVal;
+        });
+
+      for (const candidate of candidates) {
         const costDiff = candidate.now_cost - cur.now_cost;
         if (costDiff > remaining) continue;
-        if (candidate.total_points <= cur.total_points) continue;
         if (cur.team !== candidate.team && (teamCount[candidate.team] || 0) >= maxPerTeam) continue;
         if (cur.team !== candidate.team) {
           teamCount[cur.team] = (teamCount[cur.team] || 1) - 1;
@@ -308,9 +594,7 @@ function runOptimizer() {
     }
   }
 
-  optimizerSquad = squad;
-  renderOptimizer();
-  showSection("optimizer", "table");
+  return squad;
 }
 
 function renderOptimizer() {
@@ -340,6 +624,139 @@ function renderOptimizer() {
       <td class="stat-val">${p.total_points}</td>
     </tr>`;
   }).join("");
+}
+
+function renderOptimizerCharts() {
+  renderPriceDistChart();
+  renderBudgetSensitivityChart();
+}
+
+function renderPriceDistChart() {
+  const container = document.getElementById("optimizer-chart-dist");
+  if (!container || optimizerSquad.length === 0) return;
+
+  const sorted = [...optimizerSquad].sort((a, b) => b.now_cost - a.now_cost);
+  const maxCost = Math.max(...sorted.map((p) => p.now_cost));
+  const svgW = 500;
+  const svgH = 260;
+  const pad = { top: 10, right: 20, bottom: 40, left: 45 };
+  const chartW = svgW - pad.left - pad.right;
+  const chartH = svgH - pad.top - pad.bottom;
+  const barW = Math.floor(chartW / 15) - 4;
+  const gap = 4;
+
+  const posColors = { 1: "#fbbf24", 2: "#3b82f6", 3: "#22c55e", 4: "#ef4444" };
+
+  let bars = "";
+  sorted.forEach((p, i) => {
+    const x = pad.left + i * (barW + gap);
+    const h = maxCost > 0 ? (p.now_cost / maxCost) * chartH : 0;
+    const y = pad.top + chartH - h;
+    const color = posColors[p.element_type] || "#555";
+    bars += `<rect class="chart-bar" x="${x}" y="${y}" width="${barW}" height="${h}" fill="${color}" rx="2">
+      <title>${p.web_name} — ${(p.now_cost / 10).toFixed(1)}m (${getPositionShort(p.element_type)})</title>
+    </rect>`;
+    bars += `<text class="chart-label" x="${x + barW / 2}" y="${pad.top + chartH + 14}" text-anchor="middle" font-size="9">${p.web_name}</text>`;
+    if (barW > 18) {
+      bars += `<text class="chart-value" x="${x + barW / 2}" y="${y - 4}" text-anchor="middle" font-size="9">${(p.now_cost / 10).toFixed(1)}</text>`;
+    }
+  });
+
+  let yTicks = "";
+  const steps = 5;
+  for (let i = 0; i <= steps; i++) {
+    const val = (maxCost / steps) * i;
+    const y = pad.top + chartH - (chartH / steps) * i;
+    yTicks += `<text class="chart-label" x="${pad.left - 6}" y="${y + 3}" text-anchor="end" font-size="10">${(val / 10).toFixed(0)}m</text>`;
+    if (i > 0) yTicks += `<line class="chart-grid" x1="${pad.left}" y1="${y}" x2="${pad.left + chartW}" y2="${y}"/>`;
+  }
+
+  container.innerHTML = `<svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg">
+    <line class="chart-axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + chartH}"/>
+    <line class="chart-axis" x1="${pad.left}" y1="${pad.top + chartH}" x2="${pad.left + chartW}" y2="${pad.top + chartH}"/>
+    ${yTicks}
+    ${bars}
+  </svg>`;
+}
+
+function renderBudgetSensitivityChart() {
+  const container = document.getElementById("optimizer-chart-budget");
+  if (!container || !bootstrapData) return;
+
+  const budgets = [30, 40, 50, 60, 70, 80, 90, 100];
+  const results = [];
+
+  for (const b of budgets) {
+    const r = solveOptimizer(b * 10);
+    results.push({ budget: b, pts: r.totalPts, cost: r.totalCost / 10 });
+  }
+
+  const maxPts = Math.max(...results.map((r) => r.pts));
+  const minPts = Math.min(...results.map((r) => r.pts));
+  const range = maxPts - minPts || 1;
+  const svgW = 500;
+  const svgH = 260;
+  const pad = { top: 20, right: 20, bottom: 40, left: 50 };
+  const chartW = svgW - pad.left - pad.right;
+  const chartH = svgH - pad.top - pad.bottom;
+
+  const points = results.map((r, i) => {
+    const x = pad.left + (i / (results.length - 1)) * chartW;
+    const y = pad.top + chartH - ((r.pts - minPts) / range) * chartH * 0.85 - chartH * 0.05;
+    return { x, y, ...r };
+  });
+
+  let areaPath = `M ${points[0].x} ${pad.top + chartH}`;
+  points.forEach((p) => { areaPath += ` L ${p.x} ${p.y}`; });
+  areaPath += ` L ${points[points.length - 1].x} ${pad.top + chartH} Z`;
+
+  let linePath = `M ${points[0].x} ${points[0].y}`;
+  points.slice(1).forEach((p) => { linePath += ` L ${p.x} ${p.y}`; });
+
+  let yTicks = "";
+  const ySteps = 5;
+  for (let i = 0; i <= ySteps; i++) {
+    const val = minPts + (range / ySteps) * i;
+    const y = pad.top + chartH - (chartH / ySteps) * i * 0.85 - chartH * 0.05 * (i / ySteps);
+    yTicks += `<text class="chart-label" x="${pad.left - 6}" y="${y + 3}" text-anchor="end" font-size="10">${Math.round(val)}</text>`;
+    yTicks += `<line class="chart-grid" x1="${pad.left}" y1="${y}" x2="${pad.left + chartW}" y2="${y}"/>`;
+  }
+
+  let xLabels = "";
+  let dots = "";
+  points.forEach((p) => {
+    xLabels += `<text class="chart-label" x="${p.x}" y="${pad.top + chartH + 18}" text-anchor="middle" font-size="10">${p.budget}m</text>`;
+    dots += `<circle class="chart-dot" cx="${p.x}" cy="${p.y}" r="4">
+      <title>Budżet: ${p.budget}m → ${p.pts} pkt</title>
+    </circle>`;
+  });
+
+  container.innerHTML = `<svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="budgetGradient" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.4"/>
+        <stop offset="100%" stop-color="var(--accent)" stop-opacity="0.02"/>
+      </linearGradient>
+    </defs>
+    <line class="chart-axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + chartH}"/>
+    <line class="chart-axis" x1="${pad.left}" y1="${pad.top + chartH}" x2="${pad.left + chartW}" y2="${pad.top + chartH}"/>
+    ${yTicks}
+    <path class="chart-area" d="${areaPath}"/>
+    <path class="chart-line" d="${linePath}"/>
+    ${dots}
+    ${xLabels}
+  </svg>`;
+}
+
+function solveOptimizer(budget) {
+  const allPlayers = bootstrapData.elements.filter((p) => p.minutes > 0 || p.total_points > 0);
+  const maxPerTeam = 3;
+  const limits = { 1: 2, 2: 5, 3: 5, 4: 3 };
+  const squad = solveOptimizerFull(budget, allPlayers, maxPerTeam, limits);
+  return {
+    totalPts: squad.reduce((s, p) => s + p.total_points, 0),
+    totalCost: squad.reduce((s, p) => s + p.now_cost, 0),
+  };
 }
 
 // ===================== HOME / AWAY =====================
@@ -608,10 +1025,16 @@ function renderNaStart() {
     .filter((p) => p.minutes > 0)
     .map((p) => ({
       ...p,
-      valuePerPoint: p.total_points > 0 ? +((p.now_cost / 10) / p.total_points * 10).toFixed(2) : 999,
       ptsPerCost: p.now_cost > 0 ? +(p.total_points / (p.now_cost / 10)).toFixed(2) : 0,
-    }))
-    .sort((a, b) => b.ptsPerCost - a.ptsPerCost);
+    }));
+
+  const dir = naStartSort.dir === "desc" ? -1 : 1;
+  players.sort((a, b) => {
+    const av = a[naStartSort.field] ?? 0;
+    const bv = b[naStartSort.field] ?? 0;
+    if (typeof av === "string") return dir * av.localeCompare(bv);
+    return (bv - av) * dir;
+  });
 
   const tbody = document.getElementById("nastart-body");
   if (!tbody) return;
@@ -628,6 +1051,709 @@ function renderNaStart() {
       <td class="stat-val" style="color:var(--accent)">${p.ptsPerCost}</td>
     </tr>`;
   }).join("");
+}
+
+// ===================== PRICE HISTORY =====================
+
+let priceHistorySelectedId = null;
+
+function initPriceHistorySearch() {
+  const input = document.getElementById("pricehistory-search");
+  const results = document.getElementById("pricehistory-results");
+
+  input.addEventListener("input", () => {
+    const q = input.value.trim().toLowerCase();
+    if (q.length < 1) { results.classList.remove("open"); return; }
+    renderPriceHistoryResults(q);
+  });
+
+  results.addEventListener("click", (e) => {
+    const item = e.target.closest(".player-result-item");
+    if (item) {
+      priceHistorySelectedId = parseInt(item.dataset.id);
+      input.value = item.textContent.trim();
+      results.classList.remove("open");
+      runPriceHistory();
+    }
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".player-search")) results.classList.remove("open");
+  });
+
+  input.addEventListener("focus", () => {
+    if (input.value.length >= 1) renderPriceHistoryResults(input.value.trim().toLowerCase());
+  });
+
+  document.getElementById("pricehistory-season").addEventListener("change", () => {
+    if (priceHistorySelectedId) runPriceHistory();
+  });
+}
+
+function renderPriceHistoryResults(q) {
+  const results = document.getElementById("pricehistory-results");
+  if (!bootstrapData) return;
+  const matches = bootstrapData.elements
+    .filter((p) => p.web_name.toLowerCase().includes(q))
+    .slice(0, 15);
+  if (matches.length === 0) { results.classList.remove("open"); return; }
+  results.innerHTML = matches.map((p) => {
+    const team = getTeamName(p.team);
+    const pos = getPositionShort(p.element_type);
+    const color = TEAM_COLORS[p.team] || "#555";
+    return `<div class="player-result-item" data-id="${p.id}">
+      <span class="team-color" style="background:${color}"></span>
+      ${p.web_name} <span style="color:var(--text-dim);font-size:0.8rem">${team} · ${pos}</span>
+    </div>`;
+  }).join("");
+  results.classList.add("open");
+}
+
+async function runPriceHistory() {
+  if (!priceHistorySelectedId) return;
+  const season = document.getElementById("pricehistory-season").value;
+  const lang = getLang();
+
+  showSection("pricehistory", "loading");
+
+  try {
+    if (season === "current") {
+      const summary = await cachedPlayerSummary(priceHistorySelectedId);
+      const history = summary.history || [];
+      if (history.length === 0) {
+        document.getElementById("pricehistory-loading").style.display = "none";
+        document.getElementById("pricehistory-placeholder").style.display = "";
+        return;
+      }
+      renderPriceHistoryChartCurrent(history, priceHistorySelectedId);
+    } else {
+      const csvData = await fetchVaastavGW(season, 1); // get GW1 for all players
+      const player = bootstrapData.elements.find((p) => p.id === priceHistorySelectedId);
+      // Try to find by name in CSV
+      const playerName = player?.web_name || player?.first_name || "";
+      const allGWData = [];
+      // Fetch in parallel batches of 5 for speed
+      for (let batch = 0; batch < 8; batch++) {
+        const promises = [];
+        for (let b = 0; b < 5; b++) {
+          const gw = batch * 5 + b + 1;
+          if (gw > 38) break;
+          promises.push(
+            fetchVaastavGW(season, gw).then((csv) => {
+              const match = csv.find((r) =>
+                r.name && (r.name.toLowerCase().includes(playerName.toLowerCase()) ||
+                (player?.first_name && r.name.toLowerCase().includes(player.first_name.toLowerCase())))
+              );
+              if (match) return { gw, value: parseInt(match.value) || 0, points: parseInt(match.total_points) || 0 };
+              return null;
+            }).catch(() => null)
+          );
+        }
+        const results = await Promise.all(promises);
+        for (const r of results) {
+          if (r) allGWData.push(r);
+        }
+      }
+      if (allGWData.length === 0) {
+        document.getElementById("pricehistory-loading").style.display = "none";
+        document.getElementById("pricehistory-placeholder").style.display = "";
+        return;
+      }
+      renderPriceHistoryChartCSV(allGWData, player, season);
+    }
+    // Show chart, hide loading/placeholder
+    document.getElementById("pricehistory-loading").style.display = "none";
+    document.getElementById("pricehistory-placeholder").style.display = "none";
+    document.getElementById("pricehistory-chart-wrap").style.display = "";
+  } catch {
+    document.getElementById("pricehistory-loading").style.display = "none";
+    document.getElementById("pricehistory-chart-wrap").style.display = "none";
+    document.getElementById("pricehistory-placeholder").style.display = "";
+  }
+}
+
+function renderPriceHistoryChartHistory(history, playerId) {
+  const player = bootstrapData.elements.find((p) => p.id === playerId);
+  if (!player) return;
+  const lang = getLang();
+  const color = TEAM_COLORS[player.team] || "#555";
+  const posClass = `pos-${getPositionShort(player.element_type).toLowerCase()}`;
+
+  document.getElementById("pricehistory-player-info").innerHTML = `
+    <span class="team-color" style="background:${color};width:6px;height:28px;border-radius:3px;display:inline-block"></span>
+    <span class="player-name">${player.web_name}</span>
+    <span class="player-team">${getTeamName(player.team)}</span>
+    <span class="pos-badge ${posClass}">${getPositionShort(player.element_type)}</span>
+  `;
+
+  const prices = history.map((h) => (h.value || 0) / 10);
+  const rounds = history.map((h) => h.round);
+  if (prices.length === 0) return;
+
+  const minP = Math.min(...prices);
+  const maxP = Math.max(...prices);
+  const range = maxP - minP || 1;
+
+  const svgW = 800, svgH = 300;
+  const pad = { top: 30, right: 20, bottom: 40, left: 55 };
+  const chartW = svgW - pad.left - pad.right;
+  const chartH = svgH - pad.top - pad.bottom;
+
+  let path = "";
+  let dots = "";
+  let xLabels = "";
+
+  prices.forEach((p, i) => {
+    const x = pad.left + (i / Math.max(prices.length - 1, 1)) * chartW;
+    const y = pad.top + chartH - ((p - minP) / range) * chartH * 0.85 - chartH * 0.05;
+    if (i === 0) path = `M ${x} ${y}`;
+    else path += ` L ${x} ${y}`;
+    dots += `<circle cx="${x}" cy="${y}" r="3.5" fill="${color}" stroke="var(--bg-card)" stroke-width="2">
+      <title>GW${rounds[i]}: ${p.toFixed(1)}m</title>
+    </circle>`;
+    if (prices.length <= 20 || i % Math.ceil(prices.length / 20) === 0) {
+      xLabels += `<text class="chart-label" x="${x}" y="${pad.top + chartH + 18}" text-anchor="middle" font-size="10">${rounds[i]}</text>`;
+    }
+  });
+
+  // Y axis ticks
+  let yTicks = "";
+  const ySteps = 5;
+  for (let i = 0; i <= ySteps; i++) {
+    const val = minP + (range / ySteps) * i;
+    const y = pad.top + chartH - (chartH / ySteps) * i * 0.85 - chartH * 0.05 * (i / ySteps);
+    yTicks += `<text class="chart-label" x="${pad.left - 6}" y="${y + 3}" text-anchor="end" font-size="10">${val.toFixed(1)}m</text>`;
+    yTicks += `<line class="chart-grid" x1="${pad.left}" y1="${y}" x2="${pad.left + chartW}" y2="${y}"/>`;
+  }
+
+  const startP = prices[0];
+  const endP = prices[prices.length - 1];
+  const diffP = endP - startP;
+  const diffColor = diffP >= 0 ? "var(--green)" : "var(--red)";
+
+  const sumEl = document.getElementById("pricehistory-chart");
+  sumEl.innerHTML = `
+    <svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="priceGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="${color}" stop-opacity="0.3"/>
+          <stop offset="100%" stop-color="${color}" stop-opacity="0.02"/>
+        </linearGradient>
+      </defs>
+      <line class="chart-axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + chartH}"/>
+      <line class="chart-axis" x1="${pad.left}" y1="${pad.top + chartH}" x2="${pad.left + chartW}" y2="${pad.top + chartH}"/>
+      ${yTicks}
+      <path d="${path} L ${pad.left + chartW} ${pad.top + chartH} L ${pad.left} ${pad.top + chartH} Z" fill="url(#priceGrad)"/>
+      <path class="chart-line" d="${path}" stroke="${color}"/>
+      ${dots}
+      ${xLabels}
+    </svg>
+    <div class="ketchup-summary" style="margin-top:12px">
+      <div class="ketchup-stat">
+        <div class="ketchup-stat-val" style="color:var(--accent)">${startP.toFixed(1)}m</div>
+        <div class="ketchup-stat-label">${lang === "pl" ? "Cena startowa" : "Start price"}</div>
+      </div>
+      <div class="ketchup-stat">
+        <div class="ketchup-stat-val" style="color:var(--accent)">${endP.toFixed(1)}m</div>
+        <div class="ketchup-stat-label">${lang === "pl" ? "Cena końcowa" : "End price"}</div>
+      </div>
+      <div class="ketchup-stat">
+        <div class="ketchup-stat-val" style="color:${diffColor}">${diffP >= 0 ? '+' : ''}${diffP.toFixed(1)}m</div>
+        <div class="ketchup-stat-label">${lang === "pl" ? "Zmiana" : "Change"}</div>
+      </div>
+      <div class="ketchup-stat">
+        <div class="ketchup-stat-val">${maxP.toFixed(1)}m</div>
+        <div class="ketchup-stat-label">${lang === "pl" ? "Max" : "Max"}</div>
+      </div>
+      <div class="ketchup-stat">
+        <div class="ketchup-stat-val">${minP.toFixed(1)}m</div>
+        <div class="ketchup-stat-label">${lang === "pl" ? "Min" : "Min"}</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderPriceHistoryChartCurrent(history, playerId) {
+  renderPriceHistoryChartHistory(history, playerId);
+}
+
+function renderPriceHistoryChartCSV(gwData, player, season) {
+  if (!player) return;
+  const lang = getLang();
+  const color = TEAM_COLORS[player.team] || "#555";
+  const posClass = `pos-${getPositionShort(player.element_type).toLowerCase()}`;
+
+  document.getElementById("pricehistory-player-info").innerHTML = `
+    <span class="team-color" style="background:${color};width:6px;height:28px;border-radius:3px;display:inline-block"></span>
+    <span class="player-name">${player.web_name}</span>
+    <span class="player-team">${getTeamName(player.team)}</span>
+    <span class="pos-badge ${posClass}">${getPositionShort(player.element_type)}</span>
+    <span style="color:var(--text-dim);font-size:0.85rem">${season}</span>
+  `;
+
+  const prices = gwData.map((d) => d.value / 10);
+  const rounds = gwData.map((d) => d.gw);
+  if (prices.length === 0) return;
+
+  const minP = Math.min(...prices);
+  const maxP = Math.max(...prices);
+  const range = maxP - minP || 1;
+
+  const svgW = 800, svgH = 300;
+  const pad = { top: 30, right: 20, bottom: 40, left: 55 };
+  const chartW = svgW - pad.left - pad.right;
+  const chartH = svgH - pad.top - pad.bottom;
+
+  let path = "";
+  let dots = "";
+  let xLabels = "";
+
+  prices.forEach((p, i) => {
+    const x = pad.left + (i / Math.max(prices.length - 1, 1)) * chartW;
+    const y = pad.top + chartH - ((p - minP) / range) * chartH * 0.85 - chartH * 0.05;
+    if (i === 0) path = `M ${x} ${y}`;
+    else path += ` L ${x} ${y}`;
+    dots += `<circle cx="${x}" cy="${y}" r="3.5" fill="${color}" stroke="var(--bg-card)" stroke-width="2">
+      <title>GW${rounds[i]}: ${p.toFixed(1)}m</title>
+    </circle>`;
+    if (prices.length <= 20 || i % Math.ceil(prices.length / 20) === 0) {
+      xLabels += `<text class="chart-label" x="${x}" y="${pad.top + chartH + 18}" text-anchor="middle" font-size="10">${rounds[i]}</text>`;
+    }
+  });
+
+  let yTicks = "";
+  const ySteps = 5;
+  for (let i = 0; i <= ySteps; i++) {
+    const val = minP + (range / ySteps) * i;
+    const y = pad.top + chartH - (chartH / ySteps) * i * 0.85 - chartH * 0.05 * (i / ySteps);
+    yTicks += `<text class="chart-label" x="${pad.left - 6}" y="${y + 3}" text-anchor="end" font-size="10">${val.toFixed(1)}m</text>`;
+    yTicks += `<line class="chart-grid" x1="${pad.left}" y1="${y}" x2="${pad.left + chartW}" y2="${y}"/>`;
+  }
+
+  const startP = prices[0];
+  const endP = prices[prices.length - 1];
+  const diffP = endP - startP;
+  const diffColor = diffP >= 0 ? "var(--green)" : "var(--red)";
+
+  const sumEl = document.getElementById("pricehistory-chart");
+  sumEl.innerHTML = `
+    <svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="priceGradCSV" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="${color}" stop-opacity="0.3"/>
+          <stop offset="100%" stop-color="${color}" stop-opacity="0.02"/>
+        </linearGradient>
+      </defs>
+      <line class="chart-axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + chartH}"/>
+      <line class="chart-axis" x1="${pad.left}" y1="${pad.top + chartH}" x2="${pad.left + chartW}" y2="${pad.top + chartH}"/>
+      ${yTicks}
+      <path d="${path} L ${pad.left + chartW} ${pad.top + chartH} L ${pad.left} ${pad.top + chartH} Z" fill="url(#priceGradCSV)"/>
+      <path class="chart-line" d="${path}" stroke="${color}"/>
+      ${dots}
+      ${xLabels}
+    </svg>
+    <div class="ketchup-summary" style="margin-top:12px">
+      <div class="ketchup-stat">
+        <div class="ketchup-stat-val" style="color:var(--accent)">${startP.toFixed(1)}m</div>
+        <div class="ketchup-stat-label">${lang === "pl" ? "Cena startowa" : "Start price"}</div>
+      </div>
+      <div class="ketchup-stat">
+        <div class="ketchup-stat-val" style="color:var(--accent)">${endP.toFixed(1)}m</div>
+        <div class="ketchup-stat-label">${lang === "pl" ? "Cena końcowa" : "End price"}</div>
+      </div>
+      <div class="ketchup-stat">
+        <div class="ketchup-stat-val" style="color:${diffColor}">${diffP >= 0 ? '+' : ''}${diffP.toFixed(1)}m</div>
+        <div class="ketchup-stat-label">${lang === "pl" ? "Zmiana" : "Change"}</div>
+      </div>
+      <div class="ketchup-stat">
+        <div class="ketchup-stat-val">${maxP.toFixed(1)}m</div>
+        <div class="ketchup-stat-label">${lang === "pl" ? "Max" : "Max"}</div>
+      </div>
+      <div class="ketchup-stat">
+        <div class="ketchup-stat-val">${minP.toFixed(1)}m</div>
+        <div class="ketchup-stat-label">${lang === "pl" ? "Min" : "Min"}</div>
+      </div>
+    </div>
+  `;
+}
+
+// ===================== TOP 15 =====================
+
+let top15Tab = "points";
+let top15Data = [];
+
+function populateTop15GWs() {
+  const gwSelect = document.getElementById("top15-gw");
+  if (!bootstrapData) return;
+  const allGWs = bootstrapData.events || [];
+  const finishedGWs = allGWs.filter((e) => e.finished);
+  gwSelect.innerHTML = finishedGWs.map((e) =>
+    `<option value="${e.id}">GW${e.id}</option>`
+  ).join("");
+  if (finishedGWs.length > 0) {
+    gwSelect.value = finishedGWs[finishedGWs.length - 1].id;
+  }
+}
+
+function initTop15() {
+  document.getElementById("top15-run").addEventListener("click", runTop15);
+
+  document.getElementById("top15-tabs").addEventListener("click", (e) => {
+    const tab = e.target.closest(".tab");
+    if (!tab) return;
+    document.querySelectorAll("#top15-tabs .tab").forEach((t) => t.classList.remove("active"));
+    tab.classList.add("active");
+    top15Tab = tab.dataset.tab;
+    renderTop15();
+  });
+}
+
+async function runTop15() {
+  if (!bootstrapData) return;
+  const gw = parseInt(document.getElementById("top15-gw").value);
+  if (!gw) return;
+
+  showSection("top15", "loading");
+  const loadingEl = document.getElementById("top15-loading");
+  const lang = getLang();
+
+  try {
+    // Get points from bootstrap element data (all players have total_points)
+    // For per-GW points, we'd need element-summary, but that's expensive.
+    // Instead, use vaastav CSV which has both points and selected (ownership) per GW
+    const season = detectSeason(bootstrapData);
+    const seasonKey = season.replace("/", "-"); // "25/26" → "25-26"
+    // Try to get data for2025-26 or2024-25
+    let csvData;
+    try {
+      csvData = await fetchVaastavGW(seasonKey, gw);
+    } catch {
+      // Try previous season format
+      try {
+        csvData = await fetchVaastavGW("2024-25", gw);
+      } catch {
+        csvData = [];
+      }
+    }
+
+    if (csvData.length === 0) {
+      showSection("top15", "placeholder");
+      return;
+    }
+
+    // Map team names to IDs
+    const teamNameToId = {};
+    if (bootstrapData.teams) {
+      for (const team of bootstrapData.teams) {
+        teamNameToId[team.name] = team.id;
+        teamNameToId[team.short_name] = team.id;
+      }
+    }
+
+    // Map position numbers
+    const posMap = { "GKP": 1, "DEF": 2, "MID": 3, "FWD": 4 };
+
+    top15Data = csvData.map((r) => {
+      const teamId = teamNameToId[r.team] || teamNameToId[r.name?.split(" ").pop()] || 0;
+      const posId = posMap[r.position] || 0;
+      return {
+        name: r.name || "",
+        team: teamId,
+        position: posId,
+        points: parseInt(r.total_points) || 0,
+        selected: parseInt(r.selected) || 0,
+        value: parseInt(r.value) || 0,
+      };
+    });
+
+    renderTop15();
+    showSection("top15", "table");
+  } catch {
+    showSection("top15", "placeholder");
+  }
+}
+
+function renderTop15() {
+  const lang = getLang();
+  const header = document.getElementById("top15-metric-header");
+
+  let sorted;
+  if (top15Tab === "points") {
+    sorted = [...top15Data].sort((a, b) => b.points - a.points).slice(0, 15);
+    header.textContent = lang === "pl" ? "Pkt" : "Pts";
+  } else {
+    sorted = [...top15Data].sort((a, b) => b.selected - a.selected).slice(0, 15);
+    header.textContent = lang === "pl" ? "Właściciele" : "Owners";
+  }
+
+  const tbody = document.getElementById("top15-body");
+  tbody.innerHTML = sorted.map((r, i) => {
+    const color = TEAM_COLORS[r.team] || "#555";
+    const posClass = `pos-${getPositionShort(r.position).toLowerCase()}`;
+    const metric = top15Tab === "points" ? r.points : r.selected.toLocaleString();
+    return `<tr>
+      <td class="rank-num">${i + 1}</td>
+      <td>${r.name}</td>
+      <td><span class="team-color" style="background:${color}"></span>${getTeamName(r.team) || r.team}</td>
+      <td><span class="pos-badge ${posClass}">${getPositionShort(r.position)}</span></td>
+      <td class="stat-val">${metric}</td>
+    </tr>`;
+  }).join("");
+}
+
+// ===================== SQUAD BUILDER (WEIGHTED) =====================
+
+let squadBuilderSort = { field: "compositeScore", dir: "desc" };
+let squadBuilderSquad = [];
+
+function initSquadBuilder() {
+  // Weight slider live update
+  document.querySelectorAll(".weight-slider").forEach((slider) => {
+    const valEl = slider.parentElement.querySelector(".weight-val");
+    slider.addEventListener("input", () => {
+      valEl.textContent = slider.value;
+    });
+  });
+
+  document.getElementById("squadbuilder-run").addEventListener("click", runSquadBuilder);
+}
+
+function getWeights() {
+  const weights = {};
+  document.querySelectorAll(".weight-slider").forEach((slider) => {
+    weights[slider.dataset.weight] = parseInt(slider.value) / 100;
+  });
+  return weights;
+}
+
+async function runSquadBuilder() {
+  if (!bootstrapData) return;
+  const weights = getWeights();
+  const lang = getLang();
+
+  showSection("squadbuilder", "loading");
+  const loadingEl = document.getElementById("squadbuilder-loading");
+  document.getElementById("squadbuilder-chart").style.display = "none";
+
+  try {
+    // Fetch fixtures for fixture difficulty
+    let fixtures = [];
+    try {
+      fixtures = await getFixtures();
+    } catch {}
+
+    // Get all players with minutes
+    const allPlayers = bootstrapData.elements.filter((p) => p.minutes > 0 || p.total_points > 0);
+
+    // Normalize each factor across all players (0-1 scale)
+    const maxForm = Math.max(...allPlayers.map((p) => parseFloat(p.form) || 0), 1);
+    const maxXPts = Math.max(...allPlayers.map((p) => (parseFloat(p.expected_goals) || 0) + (parseFloat(p.expected_assists) || 0)), 0.01);
+    const maxMinutes = Math.max(...allPlayers.map((p) => p.minutes || 0), 1);
+
+    // Calculate fixture difficulty per team (average of all fixtures)
+    const teamFDR = {};
+    if (Array.isArray(fixtures)) {
+      const fdrCounts = {};
+      const fdrSums = {};
+      for (const f of fixtures) {
+        if (f.team_h && f.team_h_difficulty) {
+          fdrCounts[f.team_h] = (fdrCounts[f.team_h] || 0) + 1;
+          fdrSums[f.team_h] = (fdrSums[f.team_h] || 0) + f.team_h_difficulty;
+        }
+        if (f.team_a && f.team_a_difficulty) {
+          fdrCounts[f.team_a] = (fdrCounts[f.team_a] || 0) + 1;
+          fdrSums[f.team_a] = (fdrSums[f.team_a] || 0) + f.team_a_difficulty;
+        }
+      }
+      for (const teamId of Object.keys(fdrCounts)) {
+        teamFDR[teamId] = fdrSums[teamId] / fdrCounts[teamId];
+      }
+    }
+    const maxFDR = Math.max(...Object.values(teamFDR), 5);
+    const minFDR = Math.min(...Object.values(teamFDR), 1);
+    const fdrRange = maxFDR - minFDR || 1;
+
+    // Calculate composite score for each player
+    const scored = allPlayers.map((p) => {
+      const form = (parseFloat(p.form) || 0) / maxForm;
+      const fdr = teamFDR[p.team] || 3;
+      const fixture = 1 - ((fdr - minFDR) / fdrRange); // lower FDR = better = higher score
+      const xGI = (parseFloat(p.expected_goals) || 0) + (parseFloat(p.expected_assists) || 0);
+      const xpts = xGI / maxXPts;
+      const mins = (p.minutes || 0) / maxMinutes;
+
+      // Home/Away: estimate from total_points and home/away bias
+      // Use selected_by_percent as a proxy for "good away team" (teams with good away records attract more owners)
+      // Actually, just use form + xGI combo as home/away proxy since we can't easily get per-player home/away without element-summary
+      const homeaway = form * 0.5 + xpts * 0.5; // combined proxy
+
+      // Distance: lower is better. Calculate avg away travel for team's remaining fixtures
+      // For simplicity: use team's avg distance to all other PL stadiums
+      let avgDist = 0;
+      let distCount = 0;
+      for (const oppId of Object.keys(TEAM_COORDS).map(Number)) {
+        if (oppId === p.team) continue;
+        const d = travelDistance(p.team, oppId);
+        avgDist += d;
+        distCount++;
+      }
+      avgDist = distCount > 0 ? avgDist / distCount : 0;
+      const maxDist = 400; // rough max avg in PL
+      const distance = 1 - Math.min(avgDist / maxDist, 1);
+
+      const composite =
+        (weights.form || 0) * form +
+        (weights.fixture || 0) * fixture +
+        (weights.homeaway || 0) * homeaway +
+        (weights.xpts || 0) * xpts +
+        (weights.minutes || 0) * mins +
+        (weights.distance || 0) * distance;
+
+      return { ...p, compositeScore: +composite.toFixed(4) };
+    });
+
+    // Greedy squad selection
+    const maxPerTeam = 3;
+    const limits = { 1: 2, 2: 5, 3: 5, 4: 3 };
+    const squad = [];
+    const teamCount = {};
+
+    for (const pos of [1, 2, 3, 4]) {
+      const candidates = scored
+        .filter((p) => p.element_type === pos && p.now_cost > 0)
+        .sort((a, b) => b.compositeScore - a.compositeScore);
+
+      let picked = 0;
+      for (const p of candidates) {
+        if (picked >= limits[pos]) break;
+        if (squad.find((s) => s.id === p.id)) continue;
+        if ((teamCount[p.team] || 0) >= maxPerTeam) continue;
+        squad.push({ ...p });
+        teamCount[p.team] = (teamCount[p.team] || 0) + 1;
+        picked++;
+      }
+    }
+
+    // Upgrade phase
+    let totalCost = squad.reduce((s, p) => s + p.now_cost, 0);
+    let improved = true;
+    while (improved) {
+      improved = false;
+      for (let i = 0; i < squad.length; i++) {
+        const cur = squad[i];
+        const pos = cur.element_type;
+        const candidates = scored
+          .filter((p) => p.element_type === pos && p.id !== cur.id && p.compositeScore > cur.compositeScore && !squad.find((s) => s.id === p.id))
+          .sort((a, b) => b.compositeScore - a.compositeScore);
+
+        for (const c of candidates) {
+          const costDiff = c.now_cost - cur.now_cost;
+          if (costDiff > (1000 - totalCost)) continue;
+          if (cur.team !== c.team && (teamCount[c.team] || 0) >= maxPerTeam) continue;
+          if (cur.team !== c.team) {
+            teamCount[cur.team] = (teamCount[cur.team] || 1) - 1;
+            teamCount[c.team] = (teamCount[c.team] || 0) + 1;
+          }
+          squad[i] = { ...c };
+          totalCost += costDiff;
+          improved = true;
+          break;
+        }
+      }
+    }
+
+    squadBuilderSquad = squad;
+    renderSquadBuilder();
+    showSection("squadbuilder", "table");
+    document.getElementById("squadbuilder-chart").style.display = "";
+    renderSquadBuilderChart();
+  } catch {
+    document.getElementById("squadbuilder-chart").style.display = "none";
+    showSection("squadbuilder", "placeholder");
+  }
+}
+
+function renderSquadBuilder() {
+  const lang = getLang();
+  const dir = squadBuilderSort.dir === "desc" ? -1 : 1;
+  const sorted = [...squadBuilderSquad].sort((a, b) => {
+    const av = a[squadBuilderSort.field] ?? 0;
+    const bv = b[squadBuilderSort.field] ?? 0;
+    if (typeof av === "string") return dir * av.localeCompare(bv);
+    return (bv - av) * dir;
+  });
+
+  const totalPts = sorted.reduce((s, p) => s + p.total_points, 0);
+  const totalCost = sorted.reduce((s, p) => s + p.now_cost, 0);
+
+  const tbody = document.getElementById("squadbuilder-body");
+  tbody.innerHTML = `<tr><td colspan="7" style="padding:8px 12px;color:var(--accent);font-weight:600">
+    ${t("optimizer.squad")}: ${totalPts} pkt · ${(totalCost / 10).toFixed(1)}m
+  </td></tr>` + sorted.map((p, i) => {
+    const color = TEAM_COLORS[p.team] || "#555";
+    const posClass = `pos-${getPositionShort(p.element_type).toLowerCase()}`;
+    return `<tr>
+      <td class="rank-num">${i + 1}</td>
+      <td>${p.web_name}</td>
+      <td><span class="team-color" style="background:${color}"></span>${getTeamName(p.team)}</td>
+      <td><span class="pos-badge ${posClass}">${getPositionShort(p.element_type)}</span></td>
+      <td class="stat-val">${(p.now_cost / 10).toFixed(1)}</td>
+      <td class="stat-val">${p.total_points}</td>
+      <td class="stat-val" style="color:var(--accent)">${p.compositeScore.toFixed(3)}</td>
+    </tr>`;
+  }).join("");
+}
+
+function renderSquadBuilderChart() {
+  const container = document.getElementById("squadbuilder-chart");
+  if (!container || squadBuilderSquad.length === 0) return;
+
+  const sorted = [...squadBuilderSquad].sort((a, b) => b.compositeScore - a.compositeScore);
+  const maxScore = Math.max(...sorted.map((p) => p.compositeScore), 0.01);
+
+  const svgW = 800;
+  const svgH = 300;
+  const pad = { top: 20, right: 20, bottom: 50, left: 50 };
+  const chartW = svgW - pad.left - pad.right;
+  const chartH = svgH - pad.top - pad.bottom;
+  const barW = Math.floor(chartW / 15) - 4;
+  const gap = 4;
+
+  const posColors = { 1: "#fbbf24", 2: "#3b82f6", 3: "#22c55e", 4: "#ef4444" };
+
+  let bars = "";
+  sorted.forEach((p, i) => {
+    const x = pad.left + i * (barW + gap);
+    const h = (p.compositeScore / maxScore) * chartH;
+    const y = pad.top + chartH - h;
+    const color = posColors[p.element_type] || "#555";
+    bars += `<rect x="${x}" y="${y}" width="${barW}" height="${h}" fill="${color}" rx="2" opacity="0.85">
+      <title>${p.web_name} — ${p.compositeScore.toFixed(3)}</title>
+    </rect>`;
+    bars += `<text class="chart-label" x="${x + barW / 2}" y="${pad.top + chartH + 14}" text-anchor="middle" font-size="9">${p.web_name}</text>`;
+    if (barW > 16) {
+      bars += `<text class="chart-value" x="${x + barW / 2}" y="${y - 4}" text-anchor="middle" font-size="9" fill="var(--text-dim)">${p.compositeScore.toFixed(2)}</text>`;
+    }
+  });
+
+  let yTicks = "";
+  const steps = 5;
+  for (let i = 0; i <= steps; i++) {
+    const val = (maxScore / steps) * i;
+    const y = pad.top + chartH - (chartH / steps) * i;
+    yTicks += `<text class="chart-label" x="${pad.left - 6}" y="${y + 3}" text-anchor="end" font-size="10">${val.toFixed(2)}</text>`;
+    if (i > 0) yTicks += `<line class="chart-grid" x1="${pad.left}" y1="${y}" x2="${pad.left + chartW}" y2="${y}"/>`;
+  }
+
+  container.innerHTML = `
+    <h3 class="chart-title" style="margin:16px 0 8px">${lang === "pl" ? "Wynik wagowy zawodników" : "Weighted player scores"}</h3>
+    <svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg">
+      <line class="chart-axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + chartH}"/>
+      <line class="chart-axis" x1="${pad.left}" y1="${pad.top + chartH}" x2="${pad.left + chartW}" y2="${pad.top + chartH}"/>
+      ${yTicks}
+      ${bars}
+    </svg>
+  `;
 }
 
 // ===================== NAV =====================
@@ -656,6 +1782,10 @@ function initLang() {
       updateSeasonBanner(bootstrapData);
       renderRankings();
       renderNaStart();
+      populateKetchupPlayers();
+      if (homeAwayData.length > 0) renderHomeAway();
+      if (top15Data.length > 0) renderTop15();
+      if (squadBuilderSquad.length > 0) renderSquadBuilder();
     }
   });
 }
@@ -704,8 +1834,9 @@ function initOptimizer() {
 }
 
 function initKetchup() {
-  document.getElementById("ketchup-run").addEventListener("click", () => {
-    if (bootstrapData) runKetchup();
+  initKetchupSearch();
+  document.getElementById("ketchup-gw-count").addEventListener("change", () => {
+    if (bootstrapData && ketchupSelectedId) runKetchup();
   });
 }
 
@@ -732,13 +1863,17 @@ document.addEventListener("DOMContentLoaded", () => {
   initLang();
   applyTranslations();
   initRankingsTabs();
-  initTableSort("rankings-table", currentRankingsSort, renderRankings, ["totalPoints", "avgPoints", "playerCount"]);
+  initTableSort("rankings-table", currentRankingsSort, renderRankings, ["teamName", "totalPoints", "avgPoints", "playerCount"]);
   initTableSort("optimizer-table", optimizerSort, renderOptimizer, ["web_name", "now_cost", "total_points"]);
   initTableSort("homeaway-table", homeAwaySort, renderHomeAway, ["homeAvg", "awayAvg", "diff"]);
+  initTableSort("nastart-table", naStartSort, renderNaStart, ["web_name", "team", "element_type", "now_cost", "total_points", "ptsPerCost"]);
   initOptimizer();
   initKetchup();
   initHomeAway();
   initMyTeam();
   initLeader();
+  initPriceHistorySearch();
+  initTop15();
+  initSquadBuilder();
   loadData();
 });
