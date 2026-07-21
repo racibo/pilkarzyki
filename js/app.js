@@ -274,10 +274,10 @@ function renderRankings() {
 
 let ketchupSelectedId = null;
 let ketchupPlayersList = [];
+let ketchupLeadersShowCount = { underrated: 5, overrated: 5 };
 
 function populateKetchupPlayers() {
   if (!bootstrapData) return;
-  const lang = getLang();
   ketchupPlayersList = bootstrapData.elements
     .filter((p) => p.minutes > 0)
     .sort((a, b) => b.total_points - a.total_points)
@@ -288,28 +288,71 @@ function populateKetchupPlayers() {
       pos: getPositionShort(p.element_type),
       pts: p.total_points,
     }));
+  populateKetchupTeamFilter();
   renderKetchupLeaders();
 }
 
-function renderKetchupLeaders() {
+function populateKetchupTeamFilter() {
   if (!bootstrapData) return;
+  const sel = document.getElementById("ketchup-leaders-team");
+  if (!sel) return;
+  const teams = bootstrapData.teams || [];
+  sel.innerHTML = `<option value="0">${getLang() === "pl" ? "Wszystkie" : "All"}</option>` +
+    teams.map(t => `<option value="${t.id}">${t.short_name}</option>`).join("");
+}
+
+function getKetchupLeadersData() {
+  if (!bootstrapData) return [];
+  const posFilter = parseInt(document.getElementById("ketchup-leaders-pos")?.value || "0");
+  const teamFilter = parseInt(document.getElementById("ketchup-leaders-team")?.value || "0");
+  const gwFilter = parseInt(document.getElementById("ketchup-leaders-gws")?.value || "0");
+
+  const allGWs = bootstrapData.events || [];
+  const finishedGWs = allGWs.filter(e => e.finished);
+  const maxGW = finishedGWs.length > 0 ? finishedGWs[finishedGWs.length - 1].id : 38;
+
+  let players = bootstrapData.elements.filter(p => p.minutes > 0 && p.total_points > 0);
+  if (posFilter > 0) players = players.filter(p => p.element_type === posFilter);
+  if (teamFilter > 0) players = players.filter(p => p.team === teamFilter);
+
+  if (gwFilter > 0) {
+    return players.map(p => {
+      const xGI_all = (parseFloat(p.expected_goals) || 0) + (parseFloat(p.expected_assists) || 0);
+      const xPts_all = xGI_all * 4;
+      const seasonPts = p.total_points;
+      const scale = gwFilter / Math.max(finishedGWs.length, 1);
+      const approxPts = Math.round(seasonPts * scale);
+      const approxXPts = xPts_all * scale;
+      const diff = approxPts - approxXPts;
+      return { ...p, xPts: approxXPts, diff, pts: approxPts };
+    });
+  }
+
+  return players.map(p => {
+    const xGI = (parseFloat(p.expected_goals) || 0) + (parseFloat(p.expected_assists) || 0);
+    const xPts = xGI * 4;
+    const diff = p.total_points - xPts;
+    return { ...p, xPts, diff, pts: p.total_points };
+  });
+}
+
+function renderKetchupLeaders() {
   const lang = getLang();
   const el = document.getElementById("ketchup-leaders");
   if (!el) return;
 
-  const players = bootstrapData.elements.filter((p) => p.minutes > 0 && p.total_points > 0);
-  const scored = players.map((p) => {
-    const xGI = (parseFloat(p.expected_goals) || 0) + (parseFloat(p.expected_assists) || 0);
-    const xPts = xGI * 4;
-    const diff = p.total_points - xPts;
-    return { ...p, xPts, diff };
-  });
+  populateKetchupTeamFilter();
 
-  const underrated = [...scored].sort((a, b) => b.diff - a.diff).slice(0, 5);
-  const overrated = [...scored].sort((a, b) => a.diff - b.diff).slice(0, 5);
+  const scored = getKetchupLeadersData();
+  const underrated = [...scored].sort((a, b) => b.diff - a.diff);
+  const overrated = [...scored].sort((a, b) => a.diff - b.diff);
 
-  const renderCard = (title, color, icon, list) => {
-    const rows = list.map((p, i) => {
+  const showU = Math.min(ketchupLeadersShowCount.underrated, underrated.length);
+  const showO = Math.min(ketchupLeadersShowCount.overrated, overrated.length);
+
+  const renderCard = (title, color, icon, list, showCount, key) => {
+    const visible = list.slice(0, showCount);
+    const rows = visible.map((p, i) => {
       const teamColor = TEAM_COLORS[p.team] || "#555";
       return `<div class="leader-row">
         <span class="rank-num" style="min-width:20px;color:${color}">${i + 1}</span>
@@ -319,19 +362,75 @@ function renderKetchupLeaders() {
         <span style="margin-left:auto;font-weight:700;color:${color}">${p.diff >= 0 ? '+' : ''}${p.diff.toFixed(1)}</span>
       </div>`;
     }).join("");
+    const hasMore = list.length > showCount;
+    const moreBtn = hasMore ? `<div class="leader-more" data-key="${key}" data-add="5" style="text-align:center;padding:8px;cursor:pointer;color:var(--accent);font-size:0.85rem">
+      ${lang === "pl" ? `Pokaż więcej (+5) z ${list.length}` : `Show more (+5) of ${list.length}`}
+    </div>` : "";
     return `<div class="leader-card">
       <h3 style="color:${color}">${icon} ${title}</h3>
       ${rows}
+      ${moreBtn}
     </div>`;
   };
 
   const uTitle = lang === "pl" ? "Niedoszacowani (grają ponad xP)" : "Underrated (overperforming xP)";
   const oTitle = lang === "pl" ? "Przeszacowani (grają poniżej xP)" : "Overrated (underperforming xP)";
 
-  el.innerHTML = `<div class="charts-row">
-    ${renderCard(uTitle, "var(--green)", "📈", underrated)}
-    ${renderCard(oTitle, "var(--red)", "📉", overrated)}
-  </div>`;
+  el.innerHTML = `
+    <div class="card" style="margin-bottom:12px">
+      <div class="form-row">
+        <div class="form-group">
+          <label data-i18n="ketchup.position">Pozycja</label>
+          <select id="ketchup-leaders-pos">
+            <option value="0" data-i18n="common.all">Wszystkie</option>
+            <option value="1" data-i18n="rankings.gk">Bramkarze</option>
+            <option value="2" data-i18n="rankings.def">Obrońcy</option>
+            <option value="3" data-i18n="rankings.mid">Pomocnicy</option>
+            <option value="4" data-i18n="rankings.fwd">Napastnicy</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label data-i18n="ketchup.team">Drużyna</label>
+          <select id="ketchup-leaders-team">
+            <option value="0">Wszystkie</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label data-i18n="common.lastGWs">Ostatnie X kolejek</label>
+          <select id="ketchup-leaders-gws">
+            <option value="0">Wszystkie</option>
+            <option value="5">5</option>
+            <option value="10" selected>10</option>
+            <option value="19">19</option>
+            <option value="29">29</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="charts-row">
+      ${renderCard(uTitle, "var(--green)", "📈", underrated, showU, "underrated")}
+      ${renderCard(oTitle, "var(--red)", "📉", overrated, showO, "overrated")}
+    </div>`;
+
+  populateKetchupTeamFilter();
+  const teamSel = document.getElementById("ketchup-leaders-team");
+  if (teamSel) teamSel.value = "0";
+
+  el.querySelectorAll(".leader-more").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const key = btn.dataset.key;
+      const add = parseInt(btn.dataset.add);
+      ketchupLeadersShowCount[key] = (ketchupLeadersShowCount[key] || 5) + add;
+      renderKetchupLeaders();
+    });
+  });
+
+  el.querySelectorAll("#ketchup-leaders-pos, #ketchup-leaders-team, #ketchup-leaders-gws").forEach(sel => {
+    sel.addEventListener("change", () => {
+      ketchupLeadersShowCount = { underrated: 5, overrated: 5 };
+      renderKetchupLeaders();
+    });
+  });
 }
 
 function initKetchupSearch() {
@@ -630,46 +729,63 @@ function solveOptimizerFull(budget, allPlayers, maxPerTeam, limits) {
     byPos[pos].sort((a, b) => b.total_points - a.total_points);
   }
 
-  const squad = [];
-  const teamCount = {};
-  const totalSlots = Object.values(limits).reduce((a, b) => a + b, 0);
-
-  function cheapestInPos(pos, count) {
-    const avail = byPos[pos].filter((p) => p.now_cost > 0 && !squad.find((s) => s.id === p.id) && (teamCount[p.team] || 0) < maxPerTeam);
+  function getCheapestAvailable(pos, count, exclude, teamCnt) {
+    const avail = byPos[pos].filter(p =>
+      p.now_cost > 0 && !exclude.has(p.id) && (teamCnt[p.team] || 0) < maxPerTeam
+    );
     avail.sort((a, b) => a.now_cost - b.now_cost);
-    return avail.slice(0, count).reduce((s, p) => s + p.now_cost, 0);
+    return avail.slice(0, count);
   }
 
-  const posOrder = [2, 3, 4, 1];
-  for (const pos of posOrder) {
-    const need = limits[pos];
-    let remainingAfter = 0;
-    for (const otherPos of posOrder) {
-      if (otherPos === pos) continue;
-      remainingAfter += limits[otherPos] - squad.filter((s) => s.element_type === otherPos).length;
+  function getMinCostForSlots(exclude, teamCnt) {
+    let total = 0;
+    let remaining = { 1: limits[1], 2: limits[2], 3: limits[3], 4: limits[4] };
+    for (const pos of [1, 2, 3, 4]) {
+      remaining[pos] -= [...exclude].filter(id => {
+        const p = allPlayers.find(x => x.id === id);
+        return p && p.element_type === pos;
+      }).length;
     }
-    const minNeededForRest = cheapestInPos(posOrder.find((p) => p !== pos && squad.filter((s) => s.element_type === p).length < limits[p]) || pos, remainingAfter);
+    for (const pos of [2, 3, 4, 1]) {
+      if (remaining[pos] <= 0) continue;
+      const cheapest = getCheapestAvailable(pos, remaining[pos], exclude, teamCnt);
+      total += cheapest.reduce((s, p) => s + p.now_cost, 0);
+      for (const p of cheapest) exclude.add(p.id);
+    }
+    return total;
+  }
 
-    const candidates = byPos[pos].filter((p) => p.now_cost > 0 && p.total_points > 0);
+  const squad = [];
+  const teamCount = {};
+  const squadIds = new Set();
+  const totalSlots = Object.values(limits).reduce((a, b) => a + b, 0);
+
+  for (const pos of [2, 3, 4, 1]) {
+    const need = limits[pos];
+    const candidates = byPos[pos].filter(p => p.now_cost > 0 && p.total_points > 0);
     let picked = 0;
     for (const p of candidates) {
       if (picked >= need) break;
-      if (squad.find((s) => s.id === p.id)) continue;
+      if (squadIds.has(p.id)) continue;
       if ((teamCount[p.team] || 0) >= maxPerTeam) continue;
       const curCost = squad.reduce((s, x) => s + x.now_cost, 0);
-      if (curCost + p.now_cost > budget - minNeededForRest) continue;
+      const testExclude = new Set(squadIds);
+      testExclude.add(p.id);
+      const minForRest = getMinCostForSlots(testExclude, { ...teamCount, [p.team]: (teamCount[p.team] || 0) + 1 });
+      if (curCost + p.now_cost + minForRest > budget) continue;
       squad.push({ ...p });
+      squadIds.add(p.id);
       teamCount[p.team] = (teamCount[p.team] || 0) + 1;
       picked++;
     }
   }
 
   for (const pos of [1, 2, 3, 4]) {
-    const filled = squad.filter((s) => s.element_type === pos).length;
+    const filled = squad.filter(s => s.element_type === pos).length;
     if (filled >= limits[pos]) continue;
     const need = limits[pos] - filled;
     const cheapest = byPos[pos]
-      .filter((p) => p.now_cost > 0 && !squad.find((s) => s.id === p.id) && (teamCount[p.team] || 0) < maxPerTeam)
+      .filter(p => p.now_cost > 0 && !squadIds.has(p.id) && (teamCount[p.team] || 0) < maxPerTeam)
       .sort((a, b) => a.now_cost - b.now_cost);
     let picked = 0;
     for (const p of cheapest) {
@@ -677,14 +793,15 @@ function solveOptimizerFull(budget, allPlayers, maxPerTeam, limits) {
       const curCost = squad.reduce((s, x) => s + x.now_cost, 0);
       if (curCost + p.now_cost > budget) continue;
       squad.push({ ...p });
+      squadIds.add(p.id);
       teamCount[p.team] = (teamCount[p.team] || 0) + 1;
       picked++;
     }
   }
 
   const success = squad.length === totalSlots;
-
   let totalCost = squad.reduce((s, p) => s + p.now_cost, 0);
+
   if (success) {
     let improved = true;
     while (improved) {
@@ -693,7 +810,7 @@ function solveOptimizerFull(budget, allPlayers, maxPerTeam, limits) {
         const cur = squad[i];
         const pos = cur.element_type;
         const candidates = byPos[pos]
-          .filter((p) => p.id !== cur.id && p.total_points > cur.total_points && !squad.find((s) => s.id === p.id))
+          .filter(p => p.id !== cur.id && p.total_points > cur.total_points && !squadIds.has(p.id))
           .sort((a, b) => b.total_points - a.total_points);
         for (const candidate of candidates) {
           const costDiff = candidate.now_cost - cur.now_cost;
@@ -703,6 +820,8 @@ function solveOptimizerFull(budget, allPlayers, maxPerTeam, limits) {
             teamCount[cur.team] = (teamCount[cur.team] || 1) - 1;
             teamCount[candidate.team] = (teamCount[candidate.team] || 0) + 1;
           }
+          squadIds.delete(cur.id);
+          squadIds.add(candidate.id);
           squad[i] = { ...candidate };
           totalCost += costDiff;
           improved = true;
@@ -1008,56 +1127,51 @@ async function runMyTeam() {
   if (!bootstrapData) return;
   const managerId = document.getElementById("myteam-id").value;
   if (!managerId) return;
+  const gwFilter = parseInt(document.getElementById("myteam-gw-filter").value || "0");
 
   showSection("myteam", "loading");
+  document.getElementById("myteam-summary-cards").style.display = "none";
+  document.getElementById("myteam-tabs").style.display = "none";
+  document.getElementById("myteam-overview-tab").style.display = "none";
   const loadingEl = document.getElementById("myteam-loading");
   const lang = getLang();
 
   try {
     const allGWs = bootstrapData.events || [];
-    const finishedGWs = allGWs.filter((e) => e.finished);
-    const lastGW = finishedGWs.length > 0 ? finishedGWs[finishedGWs.length - 1] : allGWs[allGWs.length - 1];
-    const maxGW = lastGW?.id || 38;
+    const finishedGWs = allGWs.filter(e => e.finished);
+    const maxGW = finishedGWs.length > 0 ? finishedGWs[finishedGWs.length - 1].id : 38;
+    const startGW = gwFilter > 0 ? Math.max(1, maxGW - gwFilter + 1) : 1;
 
-    // player_id → { gw: points }
-    const playerGwPoints = {};
-    // player_id → times selected
-    const playerSelectedCount = {};
-    // player_id → points earned when selected
-    const playerPtsEarned = {};
+    const gwPicksData = {};
     let totalManagerPoints = 0;
 
-    for (let gw = 1; gw <= maxGW; gw++) {
+    for (let gw = startGW; gw <= maxGW; gw++) {
       if (loadingEl) {
         const inner = loadingEl.querySelector("div:last-child");
         if (inner) inner.textContent = `${lang === "pl" ? "Pobieranie GW" : "Fetching GW"} ${gw}/${maxGW}...`;
       }
       try {
         const picksData = await getManagerPicks(managerId, gw);
-        const picks = picksData.picks || [];
-        for (const pick of picks) {
-          if (!playerSelectedCount[pick.element]) {
-            playerSelectedCount[pick.element] = 0;
-            playerPtsEarned[pick.element] = 0;
-          }
-          playerSelectedCount[pick.element]++;
-          // We'll calculate points after fetching element summaries
-        }
-        // Store GW points from entry_history
+        gwPicksData[gw] = picksData;
         totalManagerPoints += picksData.entry_history?.points || 0;
-      } catch {
-        // skip failed GWs
+      } catch {}
+    }
+
+    const gws = Object.keys(gwPicksData).map(Number).sort((a, b) => a - b);
+    if (gws.length === 0) {
+      showSection("myteam", "placeholder");
+      return;
+    }
+
+    const allPlayerIds = new Set();
+    for (const gw of gws) {
+      for (const pick of (gwPicksData[gw].picks || [])) {
+        allPlayerIds.add(pick.element);
       }
     }
 
-    // Get current squad
-    const lastPicksData = await getManagerPicks(managerId, maxGW);
-    const lastPicks = lastPicksData.picks || [];
-    const currentSquadIds = lastPicks.map((p) => p.element);
-
-    // Fetch element-summary for current squad to get per-GW points
     const playerGwMap = {};
-    for (const pid of currentSquadIds) {
+    for (const pid of allPlayerIds) {
       try {
         const summary = await cachedPlayerSummary(pid);
         playerGwMap[pid] = {};
@@ -1067,51 +1181,196 @@ async function runMyTeam() {
       } catch {}
     }
 
-    // Now recalculate: for each GW, get picks and calculate points earned
-    const playerActualPts = {};
-    let recalcTotal = 0;
-    for (let gw = 1; gw <= maxGW; gw++) {
-      try {
-        const picksData = await getManagerPicks(managerId, gw);
-        for (const pick of (picksData.picks || [])) {
-          const gwPts = playerGwMap[pick.element]?.[gw] || 0;
-          const earned = gwPts * (pick.multiplier || 1);
-          if (!playerActualPts[pick.element]) playerActualPts[pick.element] = 0;
-          playerActualPts[pick.element] += earned;
-          recalcTotal += earned;
-        }
-      } catch {}
+    const playerStats = {};
+    for (const pid of allPlayerIds) {
+      playerStats[pid] = { totalPts: 0, gws: 0, selectedGws: 0 };
     }
+
+    const gwHistory = [];
+    const reserveLost = [];
+    const captainData = [];
+
+    for (const gw of gws) {
+      const picksData = gwPicksData[gw];
+      const picks = picksData.picks || [];
+      const starting = picks.filter(p => p.position <= 11);
+      const bench = picks.filter(p => p.position > 11);
+      const captain = picks.find(p => p.is_captain);
+
+      let gwPts = 0;
+      let benchPts = 0;
+      let captainPts = 0;
+      let captainActualPts = 0;
+      let captainName = "";
+      let bestPlayerName = "";
+      let bestPlayerPts = 0;
+      let wasCaptainBest = false;
+      let wasCaptainInTop3 = false;
+
+      const playerPtsThisGW = [];
+
+      for (const pick of picks) {
+        const pts = (playerGwMap[pick.element]?.[gw] || 0) * (pick.multiplier || 1);
+        const rawPts = playerGwMap[pick.element]?.[gw] || 0;
+        if (pick.position <= 11) {
+          gwPts += pts;
+        } else {
+          benchPts += rawPts;
+        }
+        playerPtsThisGW.push({ ...pick, pts, rawPts });
+      }
+
+      const sorted = [...playerPtsThisGW].sort((a, b) => b.rawPts - a.rawPts);
+      bestPlayerName = sorted.length > 0 ? (bootstrapData.elements.find(p => p.id === sorted[0].element)?.web_name || "?") : "?";
+      bestPlayerPts = sorted.length > 0 ? sorted[0].rawPts : 0;
+
+      if (captain) {
+        const capPlayer = bootstrapData.elements.find(p => p.id === captain.element);
+        captainName = capPlayer?.web_name || "?";
+        captainActualPts = playerGwMap[captain.element]?.[gw] || 0;
+        captainPts = captainActualPts * (captain.multiplier || 1);
+        wasCaptainBest = captainActualPts >= bestPlayerPts;
+        const top3 = sorted.slice(0, 3).map(s => s.element);
+        wasCaptainInTop3 = top3.includes(captain.element);
+      }
+
+      reserveLost.push({ gw, benchPts, benchNames: bench.map(b => bootstrapData.elements.find(p => p.id === b.element)?.web_name || "?").join(", ") });
+
+      captainData.push({
+        gw, captainName, captainPts, captainActualPts,
+        bestPlayerName, bestPlayerPts,
+        wasCaptainBest, wasCaptainInTop3,
+        efficiency: captainActualPts > 0 ? ((captainPts / Math.max(bestPlayerPts * 2, 1)) * 100).toFixed(0) : 0
+      });
+
+      gwHistory.push({ gw, pts: gwPts, benchPts, total: picksData.entry_history?.points || 0 });
+
+      for (const pick of picks) {
+        const pts = (playerGwMap[pick.element]?.[gw] || 0) * (pick.multiplier || 1);
+        playerStats[pick.element].totalPts += pts;
+        playerStats[pick.element].gws++;
+        if (pick.position <= 11) playerStats[pick.element].selectedGws++;
+      }
+    }
+
+    const lastPicks = gwPicksData[gws[gws.length - 1]]?.picks || [];
 
     const tbody = document.getElementById("myteam-body");
     tbody.innerHTML = lastPicks.map((pick, i) => {
-      const player = bootstrapData.elements.find((p) => p.id === pick.element);
+      const player = bootstrapData.elements.find(p => p.id === pick.element);
       if (!player) return "";
       const color = TEAM_COLORS[player.team] || "#555";
       const posClass = `pos-${getPositionShort(player.element_type).toLowerCase()}`;
       const captain = pick.is_captain ? " (C)" : pick.is_vice_captain ? " (VC)" : "";
-      const ptsEarned = playerActualPts[pick.element] || 0;
+      const pts = playerStats[pick.element]?.totalPts || 0;
       const totalPlayerPts = player.total_points || 1;
-      const pct = totalPlayerPts > 0 ? ((ptsEarned / totalPlayerPts) * 100).toFixed(1) : "0.0";
-      const gwsSelected = playerSelectedCount[pick.element] || 0;
+      const pct = totalPlayerPts > 0 ? ((pts / totalPlayerPts) * 100).toFixed(1) : "0.0";
+      const gwsSel = playerStats[pick.element]?.selectedGws || 0;
       return `<tr>
         <td class="rank-num">${i + 1}</td>
         <td>${player.web_name}${captain}</td>
         <td><span class="team-color" style="background:${color}"></span>${getTeamName(player.team)}</td>
         <td><span class="pos-badge ${posClass}">${getPositionShort(player.element_type)}</span></td>
-        <td class="stat-val">${ptsEarned}</td>
+        <td class="stat-val">${pts}</td>
         <td class="stat-val" style="color:${parseFloat(pct) > 50 ? 'var(--green)' : 'var(--yellow)'}">${pct}%</td>
-        <td style="color:var(--text-dim);font-size:0.8rem">${gwsSelected} ${lang === "pl" ? "kolejek" : "GWs"}</td>
+        <td style="color:var(--text-dim);font-size:0.8rem">${gwsSel} ${lang === "pl" ? "kolejek" : "GWs"}</td>
       </tr>`;
     }).join("");
-
     tbody.innerHTML += `<tr style="border-top:2px solid var(--border)">
-      <td colspan="5" style="font-weight:600;color:var(--accent)">${lang === "pl" ? "Łącznie zdobyte punkty" : "Total points earned"}</td>
-      <td class="stat-val" style="font-weight:700;font-size:1.1rem;color:var(--accent)">${recalcTotal}</td>
-      <td></td>
+      <td colspan="4" style="font-weight:600;color:var(--accent)">${lang === "pl" ? "Łącznie" : "Total"}</td>
+      <td class="stat-val" style="font-weight:700;font-size:1.1rem;color:var(--accent)">${gwHistory.reduce((s, g) => s + g.pts, 0)}</td>
+      <td colspan="2"></td>
     </tr>`;
 
+    const totalBenchLost = reserveLost.reduce((s, r) => s + r.benchPts, 0);
+    const bestGw = gwHistory.reduce((best, g) => g.pts > best.pts ? g : best, gwHistory[0]);
+    const worstGw = gwHistory.reduce((worst, g) => g.pts < worst.pts ? g : worst, gwHistory[0]);
+    const captainBestCount = captainData.filter(c => c.wasCaptainBest).length;
+    const captainTop3Count = captainData.filter(c => c.wasCaptainInTop3).length;
+
+    document.getElementById("myteam-summary-cards").style.display = "";
+    document.getElementById("myteam-summary-row").innerHTML = `
+      <div class="leader-card"><h3 style="color:var(--accent)">📊 ${lang === "pl" ? "Podsumowanie" : "Summary"}</h3>
+        <div class="leader-row"><span>${lang === "pl" ? "Sezony" : "Gameweeks"}</span><span style="margin-left:auto;font-weight:700">${gws.length}</span></div>
+        <div class="leader-row"><span>${lang === "pl" ? "Łącznie pkt" : "Total pts"}</span><span style="margin-left:auto;font-weight:700;color:var(--accent)">${gwHistory.reduce((s, g) => s + g.pts, 0)}</span></div>
+        <div class="leader-row"><span>${lang === "pl" ? "Średnia" : "Average"}</span><span style="margin-left:auto;font-weight:700">${(gwHistory.reduce((s, g) => s + g.pts, 0) / gws.length).toFixed(1)}</span></div>
+        <div class="leader-row"><span>${lang === "pl" ? "Najlepszy GW" : "Best GW"}</span><span style="margin-left:auto;font-weight:700;color:var(--green)">GW${bestGw.gw}: ${bestGw.pts}</span></div>
+        <div class="leader-row"><span>${lang === "pl" ? "Najgorszy GW" : "Worst GW"}</span><span style="margin-left:auto;font-weight:700;color:var(--red)">GW${worstGw.gw}: ${worstGw.pts}</span></div>
+      </div>
+      <div class="leader-card"><h3 style="color:var(--yellow)">🪑 ${lang === "pl" ? "Rezerwowi" : "Bench"}</h3>
+        <div class="leader-row"><span>${lang === "pl" ? "Stracone pkt z ławki" : "Bench pts lost"}</span><span style="margin-left:auto;font-weight:700;color:var(--red)">${totalBenchLost}</span></div>
+        <div class="leader-row"><span>${lang === "pl" ? "Średnio na kolejkę" : "Avg per GW"}</span><span style="margin-left:auto;font-weight:700">${(totalBenchLost / gws.length).toFixed(1)}</span></div>
+      </div>
+      <div class="leader-card"><h3 style="color:var(--green)">⭐ ${lang === "pl" ? "Kapitan" : "Captain"}</h3>
+        <div class="leader-row"><span>${lang === "pl" ? "Najlepszy w teamie" : "Best in team"}</span><span style="margin-left:auto;font-weight:700;color:var(--green)">${captainBestCount}/${gws.length}</span></div>
+        <div class="leader-row"><span>${lang === "pl" ? "W top 3" : "In top 3"}</span><span style="margin-left:auto;font-weight:700">${captainTop3Count}/${gws.length}</span></div>
+      </div>`;
+
+    document.getElementById("myteam-tabs").style.display = "";
+
+    const worstBench = [...reserveLost].sort((a, b) => b.benchPts - a.benchPts).slice(0, 5);
+    document.getElementById("myteam-reserves-tab").innerHTML = `
+      <h3 style="padding:12px 16px;color:var(--yellow)">${lang === "pl" ? "Stracone punkty — TOP 5 kolejek z największą stratą na ławce" : "Bench pts lost — TOP 5 worst bench decisions"}</h3>
+      ${worstBench.map(r => `<div class="leader-row" style="padding:8px 16px">
+        <span style="font-weight:600;min-width:50px">GW${r.gw}</span>
+        <span style="color:var(--red);font-weight:700;margin-left:8px">-${r.benchPts} pkt</span>
+        <span style="color:var(--text-dim);font-size:0.82rem;margin-left:auto">${r.benchNames}</span>
+      </div>`).join("")}
+      <div style="padding:12px 16px;color:var(--text-dim);font-size:0.85rem;border-top:1px solid var(--border)">
+        ${lang === "pl" ? `Łącznie stracono ${totalBenchLost} pkt wybierając skład zamiast rezerwowych` : `Total ${totalBenchLost} pts lost from bench decisions`}
+      </div>`;
+
+    const worstCaptains = [...captainData].filter(c => !c.wasCaptainBest).sort((a, b) => a.captainActualPts - b.captainActualPts).slice(0, 5);
+    document.getElementById("myteam-captains-tab").innerHTML = `
+      <h3 style="padding:12px 16px;color:var(--green)">${lang === "pl" ? "Analiza kapitanów kolejkę po kolejce" : "Captain analysis per gameweek"}</h3>
+      <table><thead><tr>
+        <th>GW</th><th>${lang === "pl" ? "Kapitan" : "Captain"}</th>
+        <th>${lang === "pl" ? "Pkt kapitana" : "Captain pts"}</th>
+        <th>${lang === "pl" ? "Najlepszy w teamie" : "Best in team"}</th>
+        <th>${lang === "pl" ? "Pkt najlepszego" : "Best pts"}</th>
+        <th>${lang === "pl" ? "Status" : "Status"}</th>
+      </tr></thead><tbody>
+      ${captainData.map(c => {
+        const statusColor = c.wasCaptainBest ? "var(--green)" : c.wasCaptainInTop3 ? "var(--yellow)" : "var(--red)";
+        const statusText = c.wasCaptainBest ? "✅ C" : c.wasCaptainInTop3 ? "🟡 Top3" : "❌";
+        return `<tr>
+          <td>${c.gw}</td>
+          <td><b>${c.captainName}</b> (C)</td>
+          <td class="stat-val">${c.captainPts}</td>
+          <td>${c.bestPlayerName}</td>
+          <td class="stat-val">${c.bestPlayerPts}</td>
+          <td style="color:${statusColor};font-weight:600">${statusText}</td>
+        </tr>`;
+      }).join("")}
+      </tbody></table>`;
+
+    document.getElementById("myteam-gwhistory-tab").innerHTML = `
+      <h3 style="padding:12px 16px">${lang === "pl" ? "Historia punktów w kolejce" : "Gameweek history"}</h3>
+      <table><thead><tr>
+        <th>GW</th>
+        <th>${lang === "pl" ? "Punkty" : "Points"}</th>
+        <th>${lang === "pl" ? "Ławka" : "Bench"}</th>
+        <th>${lang === "pl" ? "Razem" : "Total"}</th>
+        <th>${lang === "pl" ? "Kapitan" : "Captain"}</th>
+      </tr></thead><tbody>
+      ${gwHistory.map(g => {
+        const cap = captainData.find(c => c.gw === g.gw);
+        return `<tr>
+          <td><b>GW${g.gw}</b></td>
+          <td class="stat-val" style="color:var(--accent);font-weight:700">${g.pts}</td>
+          <td class="stat-val" style="color:var(--red)">${g.benchPts}</td>
+          <td class="stat-val">${g.total}</td>
+          <td>${cap ? cap.captainName : "-"} (${cap ? cap.captainPts : 0})</td>
+        </tr>`;
+      }).join("")}
+      </tbody></table>`;
+
+    document.getElementById("myteam-loading").style.display = "none";
     showSection("myteam", "table");
+    document.getElementById("myteam-overview-tab").style.display = "";
+    ["reserves", "captains", "gwhistory"].forEach(k => {
+      document.getElementById(`myteam-${k}-tab`).style.display = "none";
+    });
   } catch (err) {
     document.getElementById("myteam-body").innerHTML =
       `<tr><td colspan="7"><div class="error-msg">${t("common.error")}: ${err.message}</div></td></tr>`;
@@ -1286,32 +1545,28 @@ async function runPriceHistory() {
   const lang = getLang();
 
   showSection("pricehistory", "loading");
-  // Also hide chart-wrap during loading
   document.getElementById("pricehistory-chart-wrap").style.display = "none";
 
   try {
-    if (season === "current") {
+    if (season === "all") {
+      await runPriceHistoryMultiSeason();
+    } else if (season === "current") {
       const summary = await cachedPlayerSummary(priceHistorySelectedId);
       const history = summary.history || [];
-      if (history.length === 0) {
-        showSection("pricehistory", "placeholder");
-        return;
-      }
+      if (history.length === 0) { showSection("pricehistory", "placeholder"); return; }
       renderPriceHistoryChartCurrent(history, priceHistorySelectedId);
     } else {
-      const player = bootstrapData.elements.find((p) => p.id === priceHistorySelectedId);
-      // Try to find by name in CSV
+      const player = bootstrapData.elements.find(p => p.id === priceHistorySelectedId);
       const playerName = player?.web_name || player?.first_name || "";
       const allGWData = [];
-      // Fetch in parallel batches of 5 for speed
       for (let batch = 0; batch < 8; batch++) {
         const promises = [];
         for (let b = 0; b < 5; b++) {
           const gw = batch * 5 + b + 1;
           if (gw > 38) break;
           promises.push(
-            fetchVaastavGW(season, gw).then((csv) => {
-              const match = csv.find((r) =>
+            fetchVaastavGW(season, gw).then(csv => {
+              const match = csv.find(r =>
                 r.name && (r.name.toLowerCase().includes(playerName.toLowerCase()) ||
                 (player?.first_name && r.name.toLowerCase().includes(player.first_name.toLowerCase())))
               );
@@ -1321,17 +1576,11 @@ async function runPriceHistory() {
           );
         }
         const results = await Promise.all(promises);
-        for (const r of results) {
-          if (r) allGWData.push(r);
-        }
+        for (const r of results) { if (r) allGWData.push(r); }
       }
-      if (allGWData.length === 0) {
-        showSection("pricehistory", "placeholder");
-        return;
-      }
+      if (allGWData.length === 0) { showSection("pricehistory", "placeholder"); return; }
       renderPriceHistoryChartCSV(allGWData, player, season);
     }
-    // Show chart, hide loading/placeholder
     document.getElementById("pricehistory-loading").style.display = "none";
     document.getElementById("pricehistory-placeholder").style.display = "none";
     document.getElementById("pricehistory-chart-wrap").style.display = "";
@@ -1339,6 +1588,143 @@ async function runPriceHistory() {
     showSection("pricehistory", "placeholder");
     document.getElementById("pricehistory-chart-wrap").style.display = "none";
   }
+}
+
+async function runPriceHistoryMultiSeason() {
+  const player = bootstrapData.elements.find(p => p.id === priceHistorySelectedId);
+  if (!player) return;
+  const lang = getLang();
+  const color = TEAM_COLORS[player.team] || "#555";
+  const seasons = ["current", "2024-25", "2023-24", "2022-23", "2021-22"];
+  const seasonColors = ["#3b82f6", "#22c55e", "#ef4444", "#eab308", "#a855f7"];
+  const allSeasonData = [];
+
+  document.getElementById("pricehistory-player-info").innerHTML = `
+    <span class="team-color" style="background:${color};width:6px;height:28px;border-radius:3px;display:inline-block"></span>
+    <span class="player-name">${player.web_name}</span>
+    <span class="player-team">${getTeamName(player.team)}</span>
+    <span class="pos-badge pos-${getPositionShort(player.element_type).toLowerCase()}">${getPositionShort(player.element_type)}</span>
+    <span style="color:var(--text-dim);font-size:0.85rem">${lang === "pl" ? "Wszystkie sezony" : "All seasons"}</span>
+  `;
+
+  for (let si = 0; si < seasons.length; si++) {
+    const s = seasons[si];
+    try {
+      if (s === "current") {
+        const summary = await cachedPlayerSummary(priceHistorySelectedId);
+        const history = summary.history || [];
+        if (history.length > 0) {
+          allSeasonData.push({
+            season: lang === "pl" ? "25/26" : "25/26",
+            color: seasonColors[si],
+            data: history.map(h => ({ gw: h.round, value: (h.value || 0) / 10 }))
+          });
+        }
+      } else {
+        const playerName = player.web_name || "";
+        const gwData = [];
+        for (let batch = 0; batch < 8; batch++) {
+          const promises = [];
+          for (let b = 0; b < 5; b++) {
+            const gw = batch * 5 + b + 1;
+            if (gw > 38) break;
+            promises.push(
+              fetchVaastavGW(s, gw).then(csv => {
+                const match = csv.find(r => r.name && r.name.toLowerCase().includes(playerName.toLowerCase()));
+                return match ? { gw, value: (parseInt(match.value) || 0) / 10 } : null;
+              }).catch(() => null)
+            );
+          }
+          const results = await Promise.all(promises);
+          for (const r of results) { if (r) gwData.push(r); }
+        }
+        if (gwData.length > 0) {
+          const label = s.replace("20", "");
+          allSeasonData.push({
+            season: lang === "pl" ? label.replace("-", "/") : label.replace("-", "/"),
+            color: seasonColors[si],
+            data: gwData.sort((a, b) => a.gw - b.gw)
+          });
+        }
+      }
+    } catch {}
+  }
+
+  if (allSeasonData.length === 0) return;
+
+  const svgW = 800, svgH = 380;
+  const pad = { top: 30, right: 20, bottom: 40, left: 55 };
+  const chartW = svgW - pad.left - pad.right;
+  const chartH = svgH - pad.top - pad.bottom;
+
+  let allPrices = [];
+  for (const sd of allSeasonData) allPrices.push(...sd.data.map(d => d.value));
+  const minP = Math.min(...allPrices);
+  const maxP = Math.max(...allPrices);
+  const range = maxP - minP || 1;
+
+  let paths = "";
+  for (const sd of allSeasonData) {
+    let d = "";
+    sd.data.forEach((pt, i) => {
+      const x = pad.left + ((pt.gw - 1) / 37) * chartW;
+      const y = pad.top + chartH - ((pt.value - minP) / range) * chartH * 0.85 - chartH * 0.05;
+      d += (i === 0 ? "M" : "L") + ` ${x} ${y}`;
+    });
+    paths += `<path d="${d}" fill="none" stroke="${sd.color}" stroke-width="2.5" opacity="0.85"><title>${sd.season}</title></path>`;
+  }
+
+  let yTicks = "";
+  for (let i = 0; i <= 5; i++) {
+    const val = minP + (range / 5) * i;
+    const y = pad.top + chartH - (chartH / 5) * i * 0.85 - chartH * 0.05 * (i / 5);
+    yTicks += `<text class="chart-label" x="${pad.left - 6}" y="${y + 3}" text-anchor="end" font-size="10">${val.toFixed(1)}m</text>`;
+  }
+
+  let legend = `<g transform="translate(${pad.left}, 8)">`;
+  allSeasonData.forEach((sd, i) => {
+    const lx = i * 80;
+    legend += `<rect x="${lx}" y="0" width="16" height="3" fill="${sd.color}" rx="1"/>`;
+    legend += `<text x="${lx + 20}" y="6" font-size="10" fill="var(--text-dim)" font-family="sans-serif">${sd.season}</text>`;
+  });
+  legend += `</g>`;
+
+  document.getElementById("pricehistory-chart").innerHTML = `
+    <svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg">
+      <line class="chart-axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + chartH}"/>
+      <line class="chart-axis" x1="${pad.left}" y1="${pad.top + chartH}" x2="${pad.left + chartW}" y2="${pad.top + chartH}"/>
+      ${yTicks}${paths}${legend}
+    </svg>`;
+
+  renderPriceHistoryMovers();
+}
+
+async function renderPriceHistoryMovers() {
+  if (!bootstrapData) return;
+  const lang = getLang();
+  const moversEl = document.getElementById("pricehistory-movers");
+  const rowEl = document.getElementById("pricehistory-movers-row");
+  if (!moversEl || !rowEl) return;
+
+  const summary = await cachedPlayerSummary(priceHistorySelectedId).catch(() => null);
+  const currentSummary = summary?.history || [];
+  if (currentSummary.length < 2) { moversEl.style.display = "none"; return; }
+
+  const startPrice = currentSummary[0].value || 0;
+  const player = bootstrapData.elements.find(p => p.id === priceHistorySelectedId);
+  if (!player) return;
+
+  const color = TEAM_COLORS[player.team] || "#555";
+  const endPrice = currentSummary[currentSummary.length - 1].value || 0;
+  const diff = endPrice - startPrice;
+
+  moversEl.style.display = "";
+  rowEl.innerHTML = `<div class="leader-card">
+    <h3 style="color:${diff >= 0 ? 'var(--green)' : 'var(--red)'}">${diff >= 0 ? '📈' : '📉'} ${lang === "pl" ? "Zmiana ceny" : "Price change"}</h3>
+    <div class="leader-row"><span>${lang === "pl" ? "Cena startowa" : "Start price"}</span><span style="margin-left:auto;font-weight:700">${(startPrice / 10).toFixed(1)}m</span></div>
+    <div class="leader-row"><span>${lang === "pl" ? "Cena końcowa" : "End price"}</span><span style="margin-left:auto;font-weight:700">${(endPrice / 10).toFixed(1)}m</span></div>
+    <div class="leader-row"><span>${lang === "pl" ? "Zmiana" : "Change"}</span><span style="margin-left:auto;font-weight:700;color:${diff >= 0 ? 'var(--green)' : 'var(--red)'}">${diff >= 0 ? '+' : ''}${(diff / 10).toFixed(1)}m</span></div>
+  </div>`;
 }
 
 function renderPriceHistoryChartHistory(history, playerId) {
@@ -2225,35 +2611,44 @@ function renderStadiumsMap() {
   if (typeof L === "undefined") return;
 
   if (window._stadiumsMap) { window._stadiumsMap.remove(); window._stadiumsMap = null; }
-  const map = L.map(container, { scrollWheelZoom: true }).setView([53.0, -1.5], 6);
-  window._stadiumsMap = map;
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
-    maxZoom: 18,
-  }).addTo(map);
 
-  const regionColors = { london: "#f59e0b", north: "#3b82f6", midlands: "#a855f7", south: "#22c55e", east: "#ef4444" };
-
-  for (const [id, t] of Object.entries(TEAM_COORDS)) {
-    const tid = parseInt(id);
-    const color = regionColors[t.region] || "#888";
-    const teamColor = TEAM_COLORS[tid] || "#555";
-    const marker = L.circleMarker(t.stadium, {
-      radius: 8, fillColor: teamColor, color: color, weight: 2, fillOpacity: 0.9,
+  const doInit = () => {
+    if (!container.offsetWidth) {
+      setTimeout(doInit, 100);
+      return;
+    }
+    const map = L.map(container, { scrollWheelZoom: true }).setView([53.0, -1.5], 6);
+    window._stadiumsMap = map;
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
+      maxZoom: 18,
     }).addTo(map);
-    marker.bindPopup(`<div style="font-weight:700;color:${teamColor}">${t.name}</div><div style="font-size:0.85rem;color:#888">${t.stadiumName}</div><div style="font-size:0.8rem;color:#aaa">${REGIONS[t.region]?.name || t.region}</div>`);
-  }
 
-  const regionLegend = Object.entries(regionColors).map(([k, c]) =>
-    `<span style="display:inline-flex;align-items:center;gap:4px;font-size:0.8rem"><span style="width:10px;height:10px;border-radius:50%;background:${c};display:inline-block"></span>${REGIONS[k]?.name || k}</span>`
-  ).join("  ");
-  const legendDiv = document.createElement("div");
-  legendDiv.innerHTML = `<div style="padding:8px 12px;background:#1a1d27ee;border-radius:6px;position:absolute;bottom:20px;left:20px;z-index:1000;display:flex;gap:12px;flex-wrap:wrap">${regionLegend}</div>`;
-  container.appendChild(legendDiv);
+    const regionColors = { london: "#f59e0b", north: "#3b82f6", midlands: "#a855f7", south: "#22c55e", east: "#ef4444" };
 
-  setTimeout(() => { if (window._stadiumsMap) window._stadiumsMap.invalidateSize(); }, 200);
-  setTimeout(() => { if (window._stadiumsMap) window._stadiumsMap.invalidateSize(); }, 500);
-  loadStadiumsFixtures(map);
+    for (const [id, t] of Object.entries(TEAM_COORDS)) {
+      const tid = parseInt(id);
+      const color = regionColors[t.region] || "#888";
+      const teamColor = TEAM_COLORS[tid] || "#555";
+      const marker = L.circleMarker(t.stadium, {
+        radius: 8, fillColor: teamColor, color: color, weight: 2, fillOpacity: 0.9,
+      }).addTo(map);
+      marker.bindPopup(`<div style="font-weight:700;color:${teamColor}">${t.name}</div><div style="font-size:0.85rem;color:#888">${t.stadiumName}</div><div style="font-size:0.8rem;color:#aaa">${REGIONS[t.region]?.name || t.region}</div>`);
+    }
+
+    const regionLegend = Object.entries(regionColors).map(([k, c]) =>
+      `<span style="display:inline-flex;align-items:center;gap:4px;font-size:0.8rem"><span style="width:10px;height:10px;border-radius:50%;background:${c};display:inline-block"></span>${REGIONS[k]?.name || k}</span>`
+    ).join("  ");
+    const legendDiv = document.createElement("div");
+    legendDiv.innerHTML = `<div style="padding:8px 12px;background:#1a1d27ee;border-radius:6px;position:absolute;bottom:20px;left:20px;z-index:1000;display:flex;gap:12px;flex-wrap:wrap">${regionLegend}</div>`;
+    container.appendChild(legendDiv);
+
+    setTimeout(() => { if (window._stadiumsMap) window._stadiumsMap.invalidateSize(); }, 300);
+    setTimeout(() => { if (window._stadiumsMap) window._stadiumsMap.invalidateSize(); }, 800);
+    setTimeout(() => { if (window._stadiumsMap) window._stadiumsMap.invalidateSize(); }, 1500);
+    loadStadiumsFixtures(map);
+  };
+  requestAnimationFrame(doInit);
 }
 
 async function loadStadiumsFixtures(map) {
@@ -2468,6 +2863,8 @@ function initTableSort(tableId, sortState, renderFn, allowedFields) {
     th.classList.add(sortState.dir === "asc" ? "sort-asc" : "sort-desc");
     renderFn();
   });
+  const defaultTh = table.querySelector(`th[data-sort="${sortState.field}"]`);
+  if (defaultTh) defaultTh.classList.add(sortState.dir === "asc" ? "sort-asc" : "sort-desc");
 }
 
 function initOptimizer() {
@@ -2497,6 +2894,17 @@ function initHomeAway() {
 function initMyTeam() {
   document.getElementById("myteam-run").addEventListener("click", () => {
     if (bootstrapData) runMyTeam();
+  });
+  document.getElementById("myteam-tabs").addEventListener("click", (e) => {
+    const tab = e.target.closest(".tab");
+    if (!tab) return;
+    document.querySelectorAll("#myteam-tabs .tab").forEach(t => t.classList.remove("active"));
+    tab.classList.add("active");
+    const tabKey = tab.dataset.tab;
+    ["overview", "reserves", "captains", "gwhistory"].forEach(k => {
+      const el = document.getElementById(`myteam-${k}-tab`);
+      if (el) el.style.display = k === tabKey ? "" : "none";
+    });
   });
 }
 

@@ -801,6 +801,11 @@ td {
   border-bottom: none;
 }
 
+.leader-more:hover {
+  background: var(--bg-hover);
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+
 /* Top15 chart */
 .top15-chart {
   overflow-x: auto;

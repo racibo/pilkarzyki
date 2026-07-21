@@ -72,7 +72,38 @@
       <h1 class="page-title" data-i18n="ketchup.title">Forma vs Oczekiwania</h1>
       <p class="page-desc" data-i18n="ketchup.description">Kto gra ponad/poniżej oczekiwań? Porównanie rzeczywistych punktów z oczekiwanymi (xG + xA) <span class="info-icon" data-i18n-text="ketchup.info">i</span></p>
 
-      <div id="ketchup-leaders" class="ketchup-leaders"></div>
+      <div id="ketchup-leaders" class="ketchup-leaders">
+        <div class="card" style="margin-bottom:12px">
+          <div class="form-row">
+            <div class="form-group">
+              <label data-i18n="ketchup.position">Pozycja</label>
+              <select id="ketchup-leaders-pos">
+                <option value="0" data-i18n="common.all">Wszystkie</option>
+                <option value="1" data-i18n="rankings.gk">Bramkarze</option>
+                <option value="2" data-i18n="rankings.def">Obrońcy</option>
+                <option value="3" data-i18n="rankings.mid">Pomocnicy</option>
+                <option value="4" data-i18n="rankings.fwd">Napastnicy</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label data-i18n="ketchup.team">Drużyna</label>
+              <select id="ketchup-leaders-team">
+                <option value="0" data-i18n="common.all">Wszystkie</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label data-i18n="common.lastGWs">Ostatnie X kolejek</label>
+              <select id="ketchup-leaders-gws">
+                <option value="0">Wszystkie</option>
+                <option value="5">5</option>
+                <option value="10" selected>10</option>
+                <option value="19">19</option>
+                <option value="29">29</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <div class="card" id="ketchup-controls">
         <div class="form-row">
@@ -297,7 +328,7 @@
     <!-- MY TEAM -->
     <div class="page" id="page-myteam">
       <h1 class="page-title" data-i18n="myTeam.title">Mój skład</h1>
-      <p class="page-desc" data-i18n="myTeam.description">Ile pkt zdobył każdy zawodnik gdy był w Twoim składzie vs jego łączny dorobek <span class="info-icon" data-i18n-text="myTeam.info">i</span></p>
+      <p class="page-desc" data-i18n="myTeam.description">Analiza składu — punkty per kolejka, rezerwowi, kapitanowie <span class="info-icon" data-i18n-text="myTeam.info">i</span></p>
 
       <div class="card" id="myteam-controls">
         <div class="form-row">
@@ -305,29 +336,55 @@
             <label data-i18n="myTeam.managerId">ID menedżera</label>
             <input type="number" id="myteam-id" placeholder="np. 12345">
           </div>
+          <div class="form-group">
+            <label data-i18n="common.lastGWs">Ostatnie X kolejek</label>
+            <select id="myteam-gw-filter">
+              <option value="0" data-i18n="common.all">Wszystkie</option>
+              <option value="5">5</option>
+              <option value="10" selected>10</option>
+              <option value="19">19</option>
+            </select>
+          </div>
           <button class="btn" id="myteam-run" data-i18n="myTeam.load">Pobierz skład</button>
         </div>
       </div>
+
+      <div id="myteam-summary-cards" style="display:none">
+        <div class="charts-row" id="myteam-summary-row"></div>
+      </div>
+
+      <div class="tabs" id="myteam-tabs" style="display:none">
+        <button class="tab active" data-tab="overview" data-i18n="myTeam.tabOverview">Skład</button>
+        <button class="tab" data-tab="reserves" data-i18n="myTeam.tabReserves">Rezerwowi</button>
+        <button class="tab" data-tab="captains" data-i18n="myTeam.tabCaptains">Kapitanowie</button>
+        <button class="tab" data-tab="gwhistory" data-i18n="myTeam.tabGWHistory">Historia GW</button>
+      </div>
+
       <div class="card">
         <div id="myteam-loading" class="loading" style="display:none"><div class="spinner"></div><div data-i18n="common.loading">Ładowanie danych...</div></div>
         <div id="myteam-placeholder" class="placeholder">
           <div class="placeholder-icon">👥</div>
           <div data-i18n="myTeam.placeholder">Wpisz ID menedżera i kliknij 'Pobierz skład'</div>
         </div>
-        <table id="myteam-table" style="display:none">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th data-i18n="ketchup.webName">Zawodnik</th>
-              <th data-i18n="ketchup.team">Drużyna</th>
-              <th data-i18n="ketchup.position">Poz</th>
-              <th data-i18n="myTeam.yourPts">Pkt u Ciebie</th>
-              <th data-i18n="myTeam.yourPct">% wkładu</th>
-              <th data-i18n="myTeam.yourGWs">Kolejek</th>
-            </tr>
-          </thead>
-          <tbody id="myteam-body"></tbody>
-        </table>
+        <div id="myteam-overview-tab" style="display:none">
+          <table id="myteam-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th data-i18n="ketchup.webName">Zawodnik</th>
+                <th data-i18n="ketchup.team">Drużyna</th>
+                <th data-i18n="ketchup.position">Poz</th>
+                <th data-i18n="myTeam.yourPts">Pkt u Ciebie</th>
+                <th data-i18n="myTeam.yourPct">% wkładu</th>
+                <th data-i18n="myTeam.yourGWs">Kolejek</th>
+              </tr>
+            </thead>
+            <tbody id="myteam-body"></tbody>
+          </table>
+        </div>
+        <div id="myteam-reserves-tab" style="display:none"></div>
+        <div id="myteam-captains-tab" style="display:none"></div>
+        <div id="myteam-gwhistory-tab" style="display:none"></div>
       </div>
     </div>
 
@@ -401,6 +458,7 @@
             <label data-i18n="priceHistory.season">Sezon</label>
             <select id="pricehistory-season">
               <option value="current" data-i18n="priceHistory.currentSeason">Bieżący (25/26)</option>
+              <option value="all" data-i18n="priceHistory.allSeasons">Wszystkie sezony</option>
               <option value="2024-25">24/25</option>
               <option value="2023-24">23/24</option>
               <option value="2022-23">22/23</option>
@@ -419,6 +477,10 @@
           <div id="pricehistory-player-info" class="ketchup-player-info"></div>
           <div id="pricehistory-chart"></div>
         </div>
+      </div>
+
+      <div id="pricehistory-movers" style="display:none">
+        <div class="charts-row" id="pricehistory-movers-row"></div>
       </div>
     </div>
 

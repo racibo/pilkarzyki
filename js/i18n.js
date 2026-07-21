@@ -99,6 +99,10 @@ export const translations = {
       yourPct: "% wkładu",
       yourGWs: "Kolejek",
       totalPts: "Łącznie pkt",
+      tabOverview: "Skład",
+      tabReserves: "Rezerwowi",
+      tabCaptains: "Kapitanowie",
+      tabGWHistory: "Historia GW",
       info: "% wkładu = (pkt zdobyte gdy zawodnik był w Twoim składzie) / (łączne pkt zawodnika w sezonie). Im wyższy %, tym bardziej opłacał się jego wybór.",
     },
     leader: {
@@ -123,6 +127,7 @@ export const translations = {
       info: "Wykres pokazuje zmianę ceny zawodnika (value / 10) w poszczególnych kolejkach. Dla sezonu bieżącego dane pochodzą z oficjalnego API FPL. Dla wcześniejszych sezonów — z repozytorium vaastav/Fantasy-Premier-League na GitHubie.",
       season: "Sezon",
       currentSeason: "Bieżący (25/26)",
+      allSeasons: "Wszystkie sezony",
       startPrice: "Cena startowa",
       endPrice: "Cena końcowa",
       maxPrice: "Max",
@@ -159,6 +164,7 @@ export const translations = {
       noData: "Brak danych",
       players: "zawodników",
       seasonFinished: "Sezon zakończony",
+      lastGWs: "Ostatnie X kolejek",
     },
   },
   en: {
@@ -261,6 +267,10 @@ export const translations = {
       yourPct: "% contribution",
       yourGWs: "GWs",
       totalPts: "Total Pts",
+      tabOverview: "Squad",
+      tabReserves: "Reserves",
+      tabCaptains: "Captains",
+      tabGWHistory: "GW History",
       info: "% contribution = (pts scored when in your squad) / (player's total season pts). Higher % = your selection paid off.",
     },
     leader: {
@@ -285,6 +295,7 @@ export const translations = {
       info: "Chart showing player price (value / 10) per gameweek. Current season data from official FPL API. Previous seasons from vaastav/Fantasy-Premier-League GitHub repo.",
       season: "Season",
       currentSeason: "Current (25/26)",
+      allSeasons: "All seasons",
       startPrice: "Start price",
       endPrice: "End price",
       maxPrice: "Max",
@@ -321,6 +332,7 @@ export const translations = {
       noData: "No data",
       players: "players",
       seasonFinished: "Season finished",
+      lastGWs: "Last X GWs",
     },
   },
 };
