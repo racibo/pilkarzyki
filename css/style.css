@@ -721,6 +721,191 @@ td {
   padding-bottom: 8px !important;
 }
 
+/* Optimizer Pitch */
+.optimizer-view-toggle {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.optimizer-view-toggle .tab {
+  font-size: 0.8rem;
+  padding: 4px 14px;
+}
+
+#optimizer-pitch {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 0.65;
+  max-height: 600px;
+  background: linear-gradient(180deg, #1a5e1a 0%, #1d6b1d 4%, #1a5e1a 8%, #1d6b1d 12%, #1a5e1a 16%, #1d6b1d 20%, #1a5e1a 24%, #1d6b1d 28%, #1a5e1a 32%, #1d6b1d 36%, #1a5e1a 40%, #1d6b1d 44%, #1a5e1a 48%, #1d6b1d 52%, #1a5e1a 56%, #1d6b1d 60%, #1a5e1a 64%, #1d6b1d 68%, #1a5e1a 72%, #1d6b1d 76%, #1a5e1a 80%, #1d6b1d 84%, #1a5e1a 88%, #1d6b1d 92%, #1a5e1a 96%, #1d6b1d 100%);
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 2px solid #2a7a2a;
+}
+
+#optimizer-pitch::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 10%;
+  right: 10%;
+  height: 0;
+  border-top: 2px solid rgba(255,255,255,0.25);
+}
+
+#optimizer-pitch::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.25);
+}
+
+.pitch-row {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 8px;
+  position: relative;
+  z-index: 1;
+}
+
+.pitch-row + .pitch-row {
+  border-top: 1px dashed rgba(255,255,255,0.08);
+}
+
+.pitch-row-label {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.6rem;
+  color: rgba(255,255,255,0.35);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  writing-mode: vertical-lr;
+  text-orientation: mixed;
+  transform: translateY(-50%) rotate(180deg);
+}
+
+.pitch-jersey {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 72px;
+  cursor: default;
+  transition: transform 0.15s;
+}
+
+.pitch-jersey:hover {
+  transform: scale(1.08);
+}
+
+.pitch-jersey-body {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border-radius: 6px 6px 2px 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 0.9rem;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.6);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+  overflow: hidden;
+}
+
+.pitch-jersey-body::before,
+.pitch-jersey-body::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 10px;
+  height: 16px;
+  border-radius: 0 0 4px 4px;
+}
+
+.pitch-jersey-body::before {
+  left: -8px;
+  border-radius: 0 0 0 6px;
+}
+
+.pitch-jersey-body::after {
+  right: -8px;
+  border-radius: 0 0 6px 0;
+}
+
+.pitch-jersey-name {
+  margin-top: 4px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: #ddd;
+  text-align: center;
+  line-height: 1.1;
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+}
+
+.pitch-jersey-info {
+  font-size: 0.55rem;
+  color: rgba(255,255,255,0.6);
+  text-align: center;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.7);
+}
+
+.pitch-jersey-unofficial {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  color: #f59e0b;
+  font-size: 0.65rem;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+}
+
+#optimizer-summary {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+
+.optimizer-stat-box {
+  text-align: center;
+}
+
+.optimizer-stat-val {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.optimizer-stat-label {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+}
+
+.optimizer-unofficial-note {
+  grid-column: 1 / -1;
+  text-align: center;
+  font-size: 0.7rem;
+  color: #f59e0b;
+  padding-top: 4px;
+}
+
 /* Stadiums */
 .stadiums-regions-grid {
   display: grid;

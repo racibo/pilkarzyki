@@ -128,19 +128,29 @@
           <div class="placeholder-icon">🧮</div>
           <div data-i18n="optimizer.placeholder">Ustaw budżet i kliknij 'Oblicz'</div>
         </div>
-        <table id="optimizer-table" style="display:none">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th data-sort="web_name" data-i18n="ketchup.webName">Zawodnik</th>
-              <th data-i18n="ketchup.team">Drużyna</th>
-              <th data-i18n="ketchup.position">Poz</th>
-              <th data-sort="now_cost" data-i18n="ketchup.price">Cena</th>
-              <th data-sort="total_points" data-i18n="ketchup.totalPts">Pkt</th>
-            </tr>
-          </thead>
-          <tbody id="optimizer-body"></tbody>
-        </table>
+        <div id="optimizer-pitch-wrap" style="display:none">
+          <div class="optimizer-view-toggle">
+            <button class="tab active" data-optview="pitch" data-i18n="optimizer.viewPitch">Boisko</button>
+            <button class="tab" data-optview="table" data-i18n="optimizer.viewTable">Tabela</button>
+          </div>
+          <div id="optimizer-pitch"></div>
+          <div id="optimizer-pitch-table" style="display:none">
+            <table id="optimizer-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th data-sort="web_name" data-i18n="ketchup.webName">Zawodnik</th>
+                  <th data-i18n="ketchup.team">Drużyna</th>
+                  <th data-i18n="ketchup.position">Poz</th>
+                  <th data-sort="now_cost" data-i18n="ketchup.price">Cena</th>
+                  <th data-sort="total_points" data-i18n="ketchup.totalPts">Pkt</th>
+                </tr>
+              </thead>
+              <tbody id="optimizer-body"></tbody>
+            </table>
+          </div>
+          <div id="optimizer-summary"></div>
+        </div>
         <div id="optimizer-charts" style="display:none">
           <div class="charts-row">
             <div class="chart-box">

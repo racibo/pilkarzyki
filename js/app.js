@@ -737,18 +737,19 @@ function runOptimizer() {
 
   if (!result.success) {
     const lang = getLang();
-    const tbody = document.getElementById("optimizer-body");
-    tbody.innerHTML = `<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--red)">
+    document.getElementById("optimizer-pitch").innerHTML = `<div style="padding:40px;text-align:center;color:var(--red)">
       <div style="font-size:1.1rem;font-weight:600;margin-bottom:6px">${lang === "pl" ? "Za mały budżet" : "Budget too low"}</div>
       <div style="font-size:0.9rem;color:var(--text-dim)">${lang === "pl" ? "Nie udało się wybrać 15 zawodników w tym budżecie. Zwiększ budżet na suwaku." : "Could not select 15 players within this budget. Increase the budget slider."}</div>
-    </td></tr>`;
-    showSection("optimizer", "table");
+    </div>`;
+    document.getElementById("optimizer-pitch-wrap").style.display = "";
+    document.getElementById("optimizer-placeholder").style.display = "none";
     document.getElementById("optimizer-charts").style.display = "none";
     return;
   }
 
   renderOptimizer();
-  showSection("optimizer", "table");
+  document.getElementById("optimizer-pitch-wrap").style.display = "";
+  document.getElementById("optimizer-placeholder").style.display = "none";
   document.getElementById("optimizer-charts").style.display = "";
   renderOptimizerCharts();
 }
@@ -887,6 +888,49 @@ function renderOptimizer() {
 
   const budget = parseInt(document.getElementById("optimizer-budget").value);
   const remaining = ((budget - totalCost) / 10).toFixed(1);
+  const hasUnofficial = sorted.some(p => p._unofficialPrice);
+
+  function makeJersey(p) {
+    const color = TEAM_COLORS[p.team] || "#555";
+    const dark = shadeColor(color, -30);
+    const posShort = getPositionShort(p.element_type);
+    const unofficial = p._unofficialPrice
+      ? `<span class="pitch-jersey-unofficial" title="${lang === "pl" ? "Cena nieoficjalna" : "Unofficial price"}">★</span>` : "";
+    return `<div class="pitch-jersey">
+      <div class="pitch-jersey-body" style="background:${color};box-shadow:inset 0 -8px 12px ${dark}, 0 2px 6px rgba(0,0,0,0.4)">
+        <span style="position:relative;z-index:1">${p.web_name}</span>
+        ${unofficial}
+      </div>
+      <div class="pitch-jersey-name">${p.web_name}</div>
+      <div class="pitch-jersey-info">${(p.now_cost / 10).toFixed(1)}m · ${p.total_points} pkt</div>
+    </div>`;
+  }
+
+  const gk = sorted.filter(p => p.element_type === 1);
+  const def = sorted.filter(p => p.element_type === 2);
+  const mid = sorted.filter(p => p.element_type === 3);
+  const fwd = sorted.filter(p => p.element_type === 4);
+
+  const posLabels = { gk: "GK", def: "DEF", mid: "MID", fwd: "FWD" };
+
+  const pitch = document.getElementById("optimizer-pitch");
+  pitch.innerHTML = `
+    <div class="pitch-row">
+      <span class="pitch-row-label">${posLabels.gk}</span>
+      ${gk.map(makeJersey).join("")}
+    </div>
+    <div class="pitch-row">
+      <span class="pitch-row-label">${posLabels.def}</span>
+      ${def.map(makeJersey).join("")}
+    </div>
+    <div class="pitch-row">
+      <span class="pitch-row-label">${posLabels.mid}</span>
+      ${mid.map(makeJersey).join("")}
+    </div>
+    <div class="pitch-row">
+      <span class="pitch-row-label">${posLabels.fwd}</span>
+      ${fwd.map(makeJersey).join("")}
+    </div>`;
 
   const tbody = document.getElementById("optimizer-body");
   tbody.innerHTML = sorted.map((p, i) => {
@@ -901,16 +945,45 @@ function renderOptimizer() {
       <td class="stat-val">${priceLabel}${(p.now_cost / 10).toFixed(1)}</td>
       <td class="stat-val">${p.total_points}</td>
     </tr>`;
-  }).join("") + `<tr class="optimizer-summary-row">
-    <td colspan="4" style="font-weight:700;color:var(--accent)">${lang === "pl" ? "Podsumowanie" : "Summary"}</td>
-    <td class="stat-val" style="font-weight:700;color:var(--accent)">${(totalCost / 10).toFixed(1)}m</td>
-    <td class="stat-val" style="font-weight:700;color:var(--accent)">${totalPts}</td>
-  </tr>
-  <tr class="optimizer-summary-detail">
-    <td colspan="2" style="color:var(--text-dim);font-size:0.82rem">${posCounts[1]}GK · ${posCounts[2]}DEF · ${posCounts[3]}MID · ${posCounts[4]}FWD</td>
-    <td colspan="2" style="color:var(--text-dim);font-size:0.82rem">${lang === "pl" ? "Śr. cena" : "Avg price"}: ${avgCost}m · ${lang === "pl" ? "Śr. pkt" : "Avg pts"}: ${avgPts}</td>
-    <td colspan="2" style="color:var(--text-dim);font-size:0.82rem">${lang === "pl" ? "Pozostało" : "Remaining"}: ${remaining}m</td>
-  </tr>` + (sorted.some(p => p._unofficialPrice) ? `<tr class="optimizer-summary-detail"><td colspan="6" style="color:#f59e0b;font-size:0.75rem;text-align:center;padding-top:4px">★ ${lang === "pl" ? "Cena nieoficjalna (nie potwierdzona przez FPL)" : "Unofficial price (not confirmed by FPL)"}</td></tr>` : "");
+  }).join("");
+
+  const summary = document.getElementById("optimizer-summary");
+  summary.innerHTML = `
+    <div class="optimizer-stat-box">
+      <div class="optimizer-stat-val">${(totalCost / 10).toFixed(1)}m</div>
+      <div class="optimizer-stat-label">${lang === "pl" ? "Koszt" : "Cost"}</div>
+    </div>
+    <div class="optimizer-stat-box">
+      <div class="optimizer-stat-val">${totalPts}</div>
+      <div class="optimizer-stat-label">${lang === "pl" ? "Punkty" : "Points"}</div>
+    </div>
+    <div class="optimizer-stat-box">
+      <div class="optimizer-stat-val">${remaining}m</div>
+      <div class="optimizer-stat-label">${lang === "pl" ? "Pozostało" : "Remaining"}</div>
+    </div>
+    <div class="optimizer-stat-box">
+      <div class="optimizer-stat-val">${posCounts[1]}GK · ${posCounts[2]}DEF · ${posCounts[3]}MID · ${posCounts[4]}FWD</div>
+      <div class="optimizer-stat-label">${lang === "pl" ? "Skład" : "Formation"}</div>
+    </div>
+    <div class="optimizer-stat-box">
+      <div class="optimizer-stat-val">${avgCost}m</div>
+      <div class="optimizer-stat-label">${lang === "pl" ? "Śr. cena" : "Avg price"}</div>
+    </div>
+    <div class="optimizer-stat-box">
+      <div class="optimizer-stat-val">${avgPts}</div>
+      <div class="optimizer-stat-label">${lang === "pl" ? "Śr. pkt" : "Avg pts"}</div>
+    </div>
+    ${hasUnofficial ? `<div class="optimizer-unofficial-note">★ ${lang === "pl" ? "Cena nieoficjalna (nie potwierdzona przez FPL)" : "Unofficial price (not confirmed by FPL)"}</div>` : ""}`;
+
+  initTableSort("optimizer-table", optimizerSort, renderOptimizer, ["web_name", "now_cost", "total_points"]);
+}
+
+function shadeColor(hex, percent) {
+  const num = parseInt(hex.replace("#", ""), 16);
+  const r = Math.min(255, Math.max(0, (num >> 16) + percent));
+  const g = Math.min(255, Math.max(0, ((num >> 8) & 0x00FF) + percent));
+  const b = Math.min(255, Math.max(0, (num & 0x0000FF) + percent));
+  return `rgb(${r},${g},${b})`;
 }
 
 function renderOptimizerCharts() {
@@ -3374,7 +3447,8 @@ function initRankingsTabs() {
 
 function initTableSort(tableId, sortState, renderFn, allowedFields) {
   const table = document.querySelector(`#${tableId} thead tr`);
-  if (!table) return;
+  if (!table || table._sortBound) return;
+  table._sortBound = true;
   table.addEventListener("click", (e) => {
     const th = e.target.closest("th");
     if (!th || !th.dataset.sort) return;
@@ -3403,6 +3477,19 @@ function initOptimizer() {
   document.getElementById("optimizer-run").addEventListener("click", () => {
     if (bootstrapData) runOptimizer();
   });
+  const viewToggle = document.querySelector("#optimizer-pitch-wrap .optimizer-view-toggle");
+  if (viewToggle && !viewToggle._bound) {
+    viewToggle._bound = true;
+    viewToggle.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-optview]");
+      if (!btn) return;
+      viewToggle.querySelectorAll(".tab").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      const view = btn.dataset.optview;
+      document.getElementById("optimizer-pitch").style.display = view === "pitch" ? "" : "none";
+      document.getElementById("optimizer-pitch-table").style.display = view === "table" ? "" : "none";
+    });
+  }
 }
 
 function initKetchup() {

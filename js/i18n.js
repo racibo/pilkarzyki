@@ -60,6 +60,8 @@ export const translations = {
       chartPrice: "Cena (m)",
       chartPts: "Pkt",
       chartBudgetLabel: "Budżet (m)",
+      viewPitch: "Boisko",
+      viewTable: "Tabela",
     },
     homeAway: {
       title: "Dom / Wyjazd",
@@ -234,6 +236,8 @@ export const translations = {
       chartPrice: "Price (m)",
       chartPts: "Pts",
       chartBudgetLabel: "Budget (m)",
+      viewPitch: "Pitch",
+      viewTable: "Table",
     },
     homeAway: {
       title: "Home / Away",
