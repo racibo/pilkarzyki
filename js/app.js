@@ -213,6 +213,7 @@ async function loadData() {
   showSection("rankings", "loading");
   try {
     bootstrapData = await cachedBootstrap();
+    applyUnofficialPrices(bootstrapData);
     updateSeasonBanner(bootstrapData);
     renderRankings();
     renderNaStart();
@@ -223,6 +224,19 @@ async function loadData() {
     const body = document.getElementById("rankings-body");
     body.innerHTML = `<tr><td colspan="5"><div class="error-msg">${t("common.error")}: ${err.message}</div></td></tr>`;
     showSection("rankings", "table");
+  }
+}
+
+const UNOFFICIAL_PRICES = [
+  { name: "Haaland", now_cost: 155 },
+  { name: "Bruno Fernandes", now_cost: 120 },
+];
+
+function applyUnofficialPrices(data) {
+  if (!data || !data.elements) return;
+  for (const override of UNOFFICIAL_PRICES) {
+    const player = data.elements.find(p => p.web_name === override.name || p.web_name?.includes(override.name));
+    if (player && override.now_cost) player.now_cost = override.now_cost;
   }
 }
 
@@ -2900,6 +2914,8 @@ function renderStadiumsMap() {
       mapTabsEl.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
       tab.classList.add("active");
       stadiumsMapTab = tab.dataset.maptab;
+      const formToggle = document.getElementById("stadiums-form-toggle");
+      if (formToggle) formToggle.style.display = stadiumsMapTab === "form" ? "block" : "none";
       renderStadiumsMap();
     });
   }
@@ -2922,8 +2938,8 @@ function renderStadiumsMap() {
 
     const lang = getLang();
     const regionColors = { london: "#f59e0b", north: "#3b82f6", midlands: "#a855f7", south: "#22c55e", east: "#ef4444" };
-    const seasons = ["2024-25", "2023-24", "2022-23", "2021-22"];
-    const seasonNames = { "2024-25": "24/25", "2023-24": "23/24", "2022-23": "22/23", "2021-22": "21/22" };
+    const seasons = ["2025-26", "2024-25", "2023-24", "2022-23"];
+    const seasonNames = { "2025-26": "25/26", "2024-25": "24/25", "2023-24": "23/24", "2022-23": "22/23" };
 
     async function ensureData() {
       if (!stadiumsMapData) {
@@ -2942,17 +2958,6 @@ function renderStadiumsMap() {
       badgeLayer.clearLayers();
     }
 
-    function addBadge(mapRef, tid, pos, teamColor) {
-      const t = TEAM_COORDS[tid];
-      if (!t) return;
-      const badgeIcon = L.divIcon({
-        className: "",
-        html: `<div style="position:absolute;top:-8px;right:-8px;background:${teamColor};color:#fff;font-weight:700;font-size:0.7rem;width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid #1a1d27;z-index:10">${pos}</div>`,
-        iconSize: [18, 18], iconAnchor: [9, 9]
-      });
-      L.marker(t.stadium, { icon: badgeIcon, interactive: false }).addTo(badgeLayer);
-    }
-
     function renderStandingsView() {
       clearLayers();
       const maxPts = Math.max(...sorted.map(s => s.pts || 0), 1);
@@ -2961,57 +2966,55 @@ function renderStadiumsMap() {
         const teamColor = TEAM_COLORS[tid] || "#555";
         const st = standings[tid];
         const pos = sorted.findIndex(s => s.id === tid) + 1;
-        const color = regionColors[t.region] || "#888";
         const pts = st?.pts || 0;
-        const radius = 5 + (pts / maxPts) * 10;
-
-        addBadge(map, tid, pos, teamColor);
+        const radius = 5 + (pts / maxPts) * 12;
 
         const marker = L.circleMarker(t.stadium, {
-          radius, fillColor: teamColor, color, weight: 2, fillOpacity: 0.85
+          radius, fillColor: teamColor, color: "#fff", weight: 1, fillOpacity: 0.9
         }).addTo(markerLayer);
 
         marker.bindPopup(`
           <div style="min-width:180px">
-            <div style="font-weight:700;color:${teamColor};font-size:1.1rem">${t.name}</div>
+            <div style="font-weight:700;color:${teamColor};font-size:1.1rem">${pos}. ${t.name}</div>
             <div style="font-size:0.85rem;color:#888;margin-bottom:6px">${t.stadiumName}</div>
-            <div style="display:flex;gap:8px;align-items:center;margin:6px 0">
-              <div style="background:${teamColor};color:#fff;font-weight:700;font-size:1.2rem;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center">${pos}</div>
-              <div>
-                <div style="font-weight:600">${lang === "pl" ? "Pozycja" : "Position"} ${pos}/20</div>
-                <div style="color:#aaa;font-size:0.8rem">${st?.pts || 0} ${lang === "pl" ? "pkt" : "pts"}</div>
-              </div>
-            </div>
             <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;text-align:center;margin:8px 0;font-size:0.8rem">
               <div><div style="color:#22c55e;font-weight:700">${st?.w || 0}</div><div>W</div></div>
               <div><div style="color:#f59e0b;font-weight:700">${st?.d || 0}</div><div>R</div></div>
               <div><div style="color:#ef4444;font-weight:700">${st?.l || 0}</div><div>P</div></div>
               <div><div style="font-weight:700">${st?.gf || 0}:${st?.ga || 0}</div><div>GD ${st?.gd > 0 ? "+" : ""}${st?.gd || 0}</div></div>
             </div>
+            <div style="font-weight:700;color:${teamColor};font-size:1.1rem;text-align:center">${pts} pkt</div>
           </div>
         `, { maxWidth: 280 });
       }
     }
 
+    let formGWCount = 5;
+
     function renderFormView() {
       clearLayers();
+      const allFormPts = [];
+      for (const [id] of Object.entries(TEAM_COORDS)) {
+        const tid = parseInt(id);
+        const hist = posHistory[tid] || [];
+        const lastN = hist.slice(-formGWCount);
+        if (lastN.length > 0) allFormPts.push(lastN.reduce((s, h) => s + h.pos, 0) / lastN.length);
+      }
+      const bestForm = allFormPts.length > 0 ? Math.min(...allFormPts) : 1;
+      const worstForm = allFormPts.length > 0 ? Math.max(...allFormPts) : 20;
+
       for (const [id, t] of Object.entries(TEAM_COORDS)) {
         const tid = parseInt(id);
         const teamColor = TEAM_COLORS[tid] || "#555";
-        const st = standings[tid];
-        const pos = sorted.findIndex(s => s.id === tid) + 1;
         const hist = posHistory[tid] || [];
-        const color = regionColors[t.region] || "#888";
-
-        addBadge(map, tid, pos, teamColor);
-
-        const last5 = hist.slice(-5);
-        const formPts = last5.map(h => h.pos);
-        const formTrend = formPts.length >= 2 ? (formPts[formPts.length - 1] < formPts[0] ? "+" : formPts[formPts.length - 1] > formPts[0] ? "-" : "=") : "";
+        const lastN = hist.slice(-formGWCount);
+        const avgPos = lastN.length > 0 ? lastN.reduce((s, h) => s + h.pos, 0) / lastN.length : 10;
+        const radius = 6 + ((worstForm - avgPos) / Math.max(worstForm - bestForm, 1)) * 12;
+        const formTrend = lastN.length >= 2 ? (lastN[lastN.length - 1].pos < lastN[0].pos ? "+" : lastN[lastN.length - 1].pos > lastN[0].pos ? "-" : "=") : "";
         const trendColor = formTrend === "+" ? "#22c55e" : formTrend === "-" ? "#ef4444" : "#aaa";
 
         const marker = L.circleMarker(t.stadium, {
-          radius: 8, fillColor: teamColor, color, weight: 2, fillOpacity: 0.9
+          radius, fillColor: teamColor, color: "#fff", weight: 1, fillOpacity: 0.9
         }).addTo(markerLayer);
 
         marker.bindPopup(`
@@ -3019,18 +3022,34 @@ function renderStadiumsMap() {
             <div style="font-weight:700;color:${teamColor};font-size:1.1rem">${t.name}</div>
             <div style="font-size:0.85rem;color:#888">${t.stadiumName}</div>
             <div style="margin:8px 0;font-size:0.9rem">
-              ${lang === "pl" ? "Forma (ostatnie 5 GW)" : "Form (last 5 GW)"}
-              <span style="color:${trendColor};font-weight:700;font-size:1.1rem;margin-left:6px">${formTrend === "+" ? "UP" : formTrend === "-" ? "DOWN" : "="}</span>
+              ${lang === "pl" ? "Forma (ostatnie " + formGWCount + " GW)" : "Form (last " + formGWCount + " GW)"}
+              <span style="color:${trendColor};font-weight:700;font-size:1.1rem;margin-left:6px">${formTrend === "+" ? "▲" : formTrend === "-" ? "▼" : "—"}</span>
             </div>
             <div style="font-size:0.8rem;color:#aaa;line-height:1.6">
-              ${last5.map(h => `<div>GW${h.gw}: <span style="color:${h.pos <= 4 ? '#22c55e' : h.pos <= 10 ? '#f59e0b' : '#ef4444'}; font-weight:600">#${h.pos}</span></div>`).join("")}
+              ${lastN.map(h => `<div>GW${h.gw}: <span style="color:${h.pos <= 4 ? '#22c55e' : h.pos <= 10 ? '#f59e0b' : '#ef4444'}; font-weight:600">#${h.pos}</span></div>`).join("")}
             </div>
             <div style="border-top:1px solid #333;padding-top:6px;margin-top:6px;font-size:0.85rem">
-              ${lang === "pl" ? "Sezon: " : "Season: "}<b>${st?.pts || 0} pkt</b>, GD ${st?.gd > 0 ? "+" : ""}${st?.gd || 0}
+              ${lang === "pl" ? "Śr. pozycja: " : "Avg position: "}<b>${avgPos.toFixed(1)}</b>
             </div>
           </div>
         `, { maxWidth: 280 });
       }
+
+      setTimeout(() => {
+        const formToggleEl = document.getElementById("stadiums-form-toggle");
+        if (formToggleEl && !formToggleEl._bound) {
+          formToggleEl._bound = true;
+          formToggleEl.addEventListener("click", (e) => {
+            const btn = e.target.closest("[data-formgw]");
+            if (!btn) return;
+            formToggleEl.querySelectorAll("button").forEach(b => { b.style.background = "transparent"; b.style.color = ""; });
+            btn.style.background = "var(--accent)";
+            btn.style.color = "#fff";
+            formGWCount = parseInt(btn.dataset.formgw);
+            renderFormView();
+          });
+        }
+      }, 100);
     }
 
     function renderHistoryView() {
@@ -3040,26 +3059,21 @@ function renderStadiumsMap() {
         const teamColor = TEAM_COLORS[tid] || "#555";
         const hist = posHistory[tid] || [];
         const pos = sorted.findIndex(s => s.id === tid) + 1;
-        const color = regionColors[t.region] || "#888";
-
-        addBadge(map, tid, pos, teamColor);
-
         const posTrend = hist.map(h => h.pos);
         const high = Math.min(...posTrend);
         const low = Math.max(...posTrend);
-        const current = posTrend[posTrend.length - 1] || pos;
 
         const marker = L.circleMarker(t.stadium, {
-          radius: 8, fillColor: teamColor, color, weight: 2, fillOpacity: 0.9
+          radius: 8, fillColor: teamColor, color: "#fff", weight: 1, fillOpacity: 0.9
         }).addTo(markerLayer);
 
         marker.bindPopup(`
           <div style="min-width:200px">
-            <div style="font-weight:700;color:${teamColor};font-size:1.1rem">${t.name}</div>
+            <div style="font-weight:700;color:${teamColor};font-size:1.1rem">${pos}. ${t.name}</div>
             <div style="font-size:0.85rem;color:#888">${t.stadiumName}</div>
             <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;text-align:center;margin:8px 0;font-size:0.8rem">
               <div><div style="color:#22c55e;font-weight:700">#${high}</div><div style="color:#aaa">${lang === "pl" ? "Najw." : "Best"}</div></div>
-              <div><div style="font-weight:700">#${current}</div><div style="color:#aaa">${lang === "pl" ? "Teraz" : "Now"}</div></div>
+              <div><div style="font-weight:700">#${pos}</div><div style="color:#aaa">${lang === "pl" ? "Teraz" : "Now"}</div></div>
               <div><div style="color:#ef4444;font-weight:700">#${low}</div><div style="color:#aaa">${lang === "pl" ? "Najn." : "Worst"}</div></div>
             </div>
             <div style="border-top:1px solid #333;padding-top:6px;font-size:0.75rem;color:#888;line-height:1.5">
@@ -3080,12 +3094,9 @@ function renderStadiumsMap() {
         const tid = parseInt(id);
         const teamColor = TEAM_COLORS[tid] || "#555";
         const pos = sorted.findIndex(s => s.id === tid) + 1;
-        const color = regionColors[t.region] || "#888";
-
-        addBadge(map, tid, pos, teamColor);
 
         const marker = L.circleMarker(t.stadium, {
-          radius: 8, fillColor: teamColor, color, weight: 2, fillOpacity: 0.9
+          radius: 8, fillColor: teamColor, color: "#fff", weight: 1, fillOpacity: 0.9
         }).addTo(markerLayer);
 
         marker.bindPopup(`
@@ -3110,6 +3121,7 @@ function renderStadiumsMap() {
               }
             } catch {}
           }
+          const sortedSeasons = [...seasonResults].sort((a, b) => b.pts - a.pts);
           marker.setPopupContent(`
             <div style="min-width:180px">
               <div style="font-weight:700;color:${teamColor};font-size:1.1rem">${t.name}</div>
@@ -3117,7 +3129,7 @@ function renderStadiumsMap() {
               <div style="border-top:1px solid #333;padding-top:6px;margin-top:6px">
                 <div style="font-size:0.85rem;color:#aaa;margin-bottom:4px">${lang === "pl" ? "Sezony (suma pkt)" : "Seasons (total pts)"}</div>
                 <div style="font-weight:700;color:${teamColor};margin-bottom:4px">${lang === "pl" ? "Bieżący: " : "Current: "}${standings[tid]?.pts || 0} pkt</div>
-                ${seasonResults.map(s => `<div style="display:flex;justify-content:space-between;font-size:0.8rem;color:#ccc;padding:2px 0">
+                ${seasonResults.map((s, i) => `<div style="display:flex;justify-content:space-between;font-size:0.8rem;color:#ccc;padding:2px 0;${i === 0 && s.pts === sortedSeasons[0]?.pts ? 'font-weight:700;color:#ffd700' : ''}">
                   <span>${s.season}</span><span style="font-weight:700;color:${teamColor}">${s.pts} pkt</span>
                 </div>`).join("")}
                 ${seasonResults.length === 0 ? `<div style="font-size:0.75rem;color:#666">${lang === "pl" ? "Brak danych" : "No data"}</div>` : ""}

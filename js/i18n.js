@@ -156,11 +156,7 @@ export const translations = {
       mapTabHistory: "Historia",
       mapTabSeasons: "Sezony",
       mapTabFixtures: "Mecze",
-      mapTabStandings: "Tabela",
-      mapTabForm: "Forma",
-      mapTabHistory: "Historia",
-      mapTabSeasons: "Sezony",
-      mapTabFixtures: "Mecze",
+      formGW: "Kolejki:",
     },
     common: {
       loading: "Ładowanie danych...",
@@ -334,6 +330,7 @@ export const translations = {
       mapTabHistory: "History",
       mapTabSeasons: "Seasons",
       mapTabFixtures: "Fixtures",
+      formGW: "Gameweeks:",
     },
     common: {
       loading: "Loading data...",
