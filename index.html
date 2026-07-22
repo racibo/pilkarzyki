@@ -41,8 +41,8 @@
 
     <!-- RANKINGS -->
     <div class="page active" id="page-rankings">
-      <h1 class="page-title" data-i18n="rankings.title">Rankingi drużyn per linia</h1>
-      <p class="page-desc" data-i18n="rankings.description">Suma punktów drużyn pogrupowanych według pozycji na boisku <span class="info-icon" data-i18n-text="rankings.info">i</span></p>
+      <h1 class="page-title" data-i18n="rankings.title">Formacje i ranking formacji</h1>
+      <p class="page-desc" data-i18n="rankings.description">Suma punktów drużyn pogrupowanych według formacji na boisku <span class="info-icon" data-i18n-text="rankings.info">i</span></p>
 
       <div class="tabs" id="rankings-tabs">
         <button class="tab active" data-tab="gk" data-i18n="rankings.gk">Bramkarze</button>
@@ -512,7 +512,14 @@
 
       <div class="card">
         <div id="stadiums-map-tab">
-          <div id="stadiums-map" style="height:500px;border-radius:var(--radius);overflow:hidden"></div>
+          <div class="tabs" id="stadiums-map-tabs" style="margin-bottom:0;border-bottom:1px solid var(--border)">
+            <button class="tab active" data-maptab="standings" style="font-size:0.8rem;padding:6px 12px" data-i18n="stadiums.mapTabStandings">Tabela</button>
+            <button class="tab" data-maptab="form" style="font-size:0.8rem;padding:6px 12px" data-i18n="stadiums.mapTabForm">Forma</button>
+            <button class="tab" data-maptab="history" style="font-size:0.8rem;padding:6px 12px" data-i18n="stadiums.mapTabHistory">Historia</button>
+            <button class="tab" data-maptab="seasons" style="font-size:0.8rem;padding:6px 12px" data-i18n="stadiums.mapTabSeasons">Sezony</button>
+            <button class="tab" data-maptab="fixtures" style="font-size:0.8rem;padding:6px 12px" data-i18n="stadiums.mapTabFixtures">Mecze</button>
+          </div>
+          <div id="stadiums-map" style="height:500px;border-radius:0 0 var(--radius) var(--radius);overflow:hidden"></div>
         </div>
         <div id="stadiums-regions-tab" style="display:none"></div>
         <div id="stadiums-distances-tab" style="display:none"></div>
