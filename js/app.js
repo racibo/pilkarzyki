@@ -213,7 +213,6 @@ async function loadData() {
   showSection("rankings", "loading");
   try {
     bootstrapData = await cachedBootstrap();
-    applyUnofficialPrices(bootstrapData);
     updateSeasonBanner(bootstrapData);
     renderRankings();
     renderNaStart();
@@ -238,6 +237,18 @@ function applyUnofficialPrices(data) {
     const player = data.elements.find(p => p.web_name === override.name || p.web_name?.includes(override.name));
     if (player && override.now_cost) player.now_cost = override.now_cost;
   }
+}
+
+function getOptimizedPlayers() {
+  const elements = bootstrapData.elements.map(p => ({ ...p }));
+  for (const override of UNOFFICIAL_PRICES) {
+    const player = elements.find(p => p.web_name === override.name || p.web_name?.includes(override.name));
+    if (player && override.now_cost) {
+      player.now_cost = override.now_cost;
+      player._unofficialPrice = true;
+    }
+  }
+  return elements;
 }
 
 // ===================== RANKINGS =====================
@@ -717,7 +728,7 @@ let optimizerSquad = [];
 function runOptimizer() {
   if (!bootstrapData) return;
   const budget = parseInt(document.getElementById("optimizer-budget").value);
-  const allPlayers = bootstrapData.elements.filter((p) => p.minutes > 0 || p.total_points > 0);
+  const allPlayers = getOptimizedPlayers().filter((p) => p.minutes > 0 || p.total_points > 0);
   const maxPerTeam = 3;
   const limits = { 1: 2, 2: 5, 3: 5, 4: 3 };
 
@@ -881,12 +892,13 @@ function renderOptimizer() {
   tbody.innerHTML = sorted.map((p, i) => {
     const color = TEAM_COLORS[p.team] || "#555";
     const posClass = `pos-${getPositionShort(p.element_type).toLowerCase()}`;
+    const priceLabel = p._unofficialPrice ? `<span title="${lang === "pl" ? "Cena nieoficjalna" : "Unofficial price"}" style="color:#f59e0b;cursor:help">★</span> ` : "";
     return `<tr>
       <td class="rank-num">${i + 1}</td>
       <td>${p.web_name}</td>
       <td><span class="team-color" style="background:${color}"></span>${getTeamName(p.team)}</td>
       <td><span class="pos-badge ${posClass}">${getPositionShort(p.element_type)}</span></td>
-      <td class="stat-val">${(p.now_cost / 10).toFixed(1)}</td>
+      <td class="stat-val">${priceLabel}${(p.now_cost / 10).toFixed(1)}</td>
       <td class="stat-val">${p.total_points}</td>
     </tr>`;
   }).join("") + `<tr class="optimizer-summary-row">
@@ -898,7 +910,7 @@ function renderOptimizer() {
     <td colspan="2" style="color:var(--text-dim);font-size:0.82rem">${posCounts[1]}GK · ${posCounts[2]}DEF · ${posCounts[3]}MID · ${posCounts[4]}FWD</td>
     <td colspan="2" style="color:var(--text-dim);font-size:0.82rem">${lang === "pl" ? "Śr. cena" : "Avg price"}: ${avgCost}m · ${lang === "pl" ? "Śr. pkt" : "Avg pts"}: ${avgPts}</td>
     <td colspan="2" style="color:var(--text-dim);font-size:0.82rem">${lang === "pl" ? "Pozostało" : "Remaining"}: ${remaining}m</td>
-  </tr>`;
+  </tr>` + (sorted.some(p => p._unofficialPrice) ? `<tr class="optimizer-summary-detail"><td colspan="6" style="color:#f59e0b;font-size:0.75rem;text-align:center;padding-top:4px">★ ${lang === "pl" ? "Cena nieoficjalna (nie potwierdzona przez FPL)" : "Unofficial price (not confirmed by FPL)"}</td></tr>` : "");
 }
 
 function renderOptimizerCharts() {
@@ -1024,7 +1036,7 @@ function renderBudgetSensitivityChart() {
 }
 
 function solveOptimizer(budget) {
-  const allPlayers = bootstrapData.elements.filter((p) => p.minutes > 0 || p.total_points > 0);
+  const allPlayers = getOptimizedPlayers().filter((p) => p.minutes > 0 || p.total_points > 0);
   const maxPerTeam = 3;
   const limits = { 1: 2, 2: 5, 3: 5, 4: 3 };
   const result = solveOptimizerFull(budget, allPlayers, maxPerTeam, limits);
