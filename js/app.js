@@ -3537,58 +3537,73 @@ function addLockedPlayerRow() {
   const list = document.getElementById("optimizer-locked-list");
   const allPlayers = bootstrapData.elements.filter(p => p.minutes > 0 || p.total_points > 0);
   const usedIds = new Set(optimizerLockedIds);
-  const options = allPlayers
-    .filter(p => !usedIds.has(p.id))
-    .sort((a, b) => b.total_points - a.total_points)
-    .map(p => {
-      const teamName = getTeamName(p.team);
-      const pos = getPositionShort(p.element_type);
-      return `<option value="${p.id}">${p.web_name} (${teamName} ${pos}) ${(p.now_cost / 10).toFixed(1)}m</option>`;
-    }).join("");
+  const available = allPlayers.filter(p => !usedIds.has(p.id)).sort((a, b) => b.total_points - a.total_points);
 
   const row = document.createElement("div");
   row.className = "optimizer-locked-row";
   row.innerHTML = `
-    <select class="optimizer-locked-select">${options}</select>
+    <input type="text" class="optimizer-locked-input" list="optimizer-locked-datalist" placeholder="${getLang() === "pl" ? "Szukaj zawodnika..." : "Search player..."}" autocomplete="off" style="flex:1;max-width:360px;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:0.82rem" />
     <span class="optimizer-locked-cost" style="font-size:0.8rem;color:var(--text-dim);min-width:40px"></span>
-    <button class="optimizer-locked-remove" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:1.1rem;padding:2px 6px" title="Usuń">✕</button>`;
+    <button class="optimizer-locked-remove" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:1.1rem;padding:2px 6px;display:none" title="Usuń">✕</button>`;
   list.appendChild(row);
 
-  const select = row.querySelector("select");
+  let datalist = document.getElementById("optimizer-locked-datalist");
+  if (!datalist) {
+    datalist = document.createElement("datalist");
+    datalist.id = "optimizer-locked-datalist";
+    document.body.appendChild(datalist);
+  }
+  datalist.innerHTML = available.map(p => {
+    const teamName = getTeamName(p.team);
+    const pos = getPositionShort(p.element_type);
+    return `<option value="${p.web_name} (${teamName} ${pos})" data-id="${p.id}">${(p.now_cost / 10).toFixed(1)}m</option>`;
+  }).join("");
+
+  const input = row.querySelector("input");
   const costSpan = row.querySelector(".optimizer-locked-cost");
   const removeBtn = row.querySelector(".optimizer-locked-remove");
 
-  select.addEventListener("change", () => {
-    const pid = parseInt(select.value);
-    const player = allPlayers.find(p => p.id === pid);
-    if (!player) return;
+  function commitSelection() {
+    const val = input.value.trim();
+    const match = available.find(p => {
+      const teamName = getTeamName(p.team);
+      const pos = getPositionShort(p.element_type);
+      return `${p.web_name} (${teamName} ${pos})` === val;
+    });
+    if (!match) { input.value = ""; return; }
+    const pid = match.id;
+    const player = match;
     optimizerLockedIds.push(pid);
     costSpan.textContent = `${(player.now_cost / 10).toFixed(1)}m`;
-    updateLockedInfo();
     if (player._unofficialPrice) {
       costSpan.innerHTML += ` <span style="color:#f59e0b" title="Cena nieoficjalna">★</span>`;
     }
-    select.disabled = true;
+    input.disabled = true;
     removeBtn.style.display = "";
-    addLockedPlayerRow();
-  });
+    updateLockedInfo();
+    setTimeout(() => addLockedPlayerRow(), 0);
+  }
 
-  select.addEventListener("focus", () => {
-    const currentUsed = new Set(optimizerLockedIds);
-    const opts = select.querySelectorAll("option");
-    opts.forEach(opt => {
-      opt.style.display = currentUsed.has(parseInt(opt.value)) ? "none" : "";
-    });
+  input.addEventListener("change", commitSelection);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commitSelection(); }
   });
 
   removeBtn.addEventListener("click", () => {
-    const pid = parseInt(select.value);
-    optimizerLockedIds = optimizerLockedIds.filter(id => id !== pid);
+    const val = input.value.trim();
+    const match = available.find(p => {
+      const teamName = getTeamName(p.team);
+      const pos = getPositionShort(p.element_type);
+      return `${p.web_name} (${teamName} ${pos})` === val;
+    });
+    if (match) {
+      optimizerLockedIds = optimizerLockedIds.filter(id => id !== match.id);
+    }
     row.remove();
     updateLockedInfo();
   });
 
-  if (options === "") row.remove();
+  input.focus();
 }
 
 function updateLockedInfo() {
