@@ -219,6 +219,7 @@ async function loadData() {
     populateKetchupPlayers();
     populateTop15GWs();
     updateOptimizerSlider();
+    runOptimizer();
   } catch (err) {
     const body = document.getElementById("rankings-body");
     body.innerHTML = `<tr><td colspan="5"><div class="error-msg">${t("common.error")}: ${err.message}</div></td></tr>`;
@@ -229,6 +230,7 @@ async function loadData() {
 const UNOFFICIAL_PRICES = [
   { name: "Haaland", now_cost: 155 },
   { name: "B.Fernandes", now_cost: 120 },
+  { name: "Gabriel", now_cost: 80 },
 ];
 
 function applyUnofficialPrices(data) {
@@ -894,11 +896,13 @@ function renderOptimizer() {
     const color = TEAM_COLORS[p.team] || "#555";
     const dark = shadeColor(color, -30);
     const posShort = getPositionShort(p.element_type);
+    const teamAbbr = getTeamName(p.team) || "";
     const unofficial = p._unofficialPrice
       ? `<span class="pitch-jersey-unofficial" title="${lang === "pl" ? "Cena nieoficjalna" : "Unofficial price"}">★</span>` : "";
     return `<div class="pitch-jersey">
-      <div class="pitch-jersey-body" style="background:${color};box-shadow:inset 0 -8px 12px ${dark}, 0 2px 6px rgba(0,0,0,0.4)">
-        <span style="position:relative;z-index:1">${p.web_name}</span>
+      <div class="pitch-jersey-body" style="background:${color};box-shadow:inset 0 -10px 14px ${dark}, 0 2px 6px rgba(0,0,0,0.4)">
+        <span style="position:relative;z-index:1;text-align:center;line-height:1.15;font-size:0.68rem;padding:2px">${p.web_name}</span>
+        <span class="pitch-jersey-badge">${teamAbbr}</span>
         ${unofficial}
       </div>
       <div class="pitch-jersey-name">${p.web_name}</div>
