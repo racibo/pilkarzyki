@@ -62,6 +62,7 @@ export const translations = {
       chartBudgetLabel: "Budżet (m)",
       viewPitch: "Boisko",
       viewTable: "Tabela",
+      lockedLabel: "Zawodnicy na sztywno",
     },
     homeAway: {
       title: "Dom / Wyjazd",
@@ -238,6 +239,7 @@ export const translations = {
       chartBudgetLabel: "Budget (m)",
       viewPitch: "Pitch",
       viewTable: "Table",
+      lockedLabel: "Locked players",
     },
     homeAway: {
       title: "Home / Away",

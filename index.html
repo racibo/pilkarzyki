@@ -121,6 +121,14 @@
           <span id="optimizer-budget-display" class="stat-val">100.0</span>
           <button class="btn" id="optimizer-run" data-i18n="optimizer.calculate">Oblicz</button>
         </div>
+        <div id="optimizer-locked-section" style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <label style="font-size:0.85rem;font-weight:600;color:var(--text-dim)" data-i18n="optimizer.lockedLabel">Zawodnicy na sztywno</label>
+            <button class="btn" id="optimizer-add-locked" style="font-size:0.75rem;padding:3px 10px">+</button>
+            <span id="optimizer-locked-info" style="font-size:0.75rem;color:var(--text-dim)"></span>
+          </div>
+          <div id="optimizer-locked-list"></div>
+        </div>
       </div>
       <div class="card">
         <div id="optimizer-loading" class="loading" style="display:none"><div class="spinner"></div><div data-i18n="common.loading">Ładowanie danych...</div></div>
@@ -543,6 +551,15 @@
     </div>
 
   </main>
+
+  <footer style="text-align:center;padding:24px 16px;border-top:1px solid var(--border);margin-top:24px">
+    <a href="https://racibo.pl" target="_blank" rel="noopener" style="display:inline-block;background:linear-gradient(135deg,#2563eb,#7c3aed);color:#fff;padding:12px 28px;border-radius:var(--radius);text-decoration:none;font-weight:700;font-size:0.95rem;box-shadow:0 2px 8px rgba(37,99,235,0.3);transition:transform 0.15s,box-shadow 0.15s" onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 4px 14px rgba(37,99,235,0.45)'" onmouseout="this.style.transform='';this.style.boxShadow='0 2px 8px rgba(37,99,235,0.3)'">
+      Wesprzyj projekt · Odwiedź <strong>racibo.pl</strong>
+    </a>
+    <div style="margin-top:8px;font-size:0.75rem;color:var(--text-dim)">
+      Zaproś turystów po Trójmieście do skorzystania z moich usług
+    </div>
+  </footer>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script type="module" src="js/app.js"></script>

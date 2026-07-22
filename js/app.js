@@ -726,6 +726,7 @@ function renderKetchupChart(player, data, startGW, maxGW) {
 
 let optimizerSort = { field: "total_points", dir: "desc" };
 let optimizerSquad = [];
+let optimizerLockedIds = [];
 
 function runOptimizer() {
   if (!bootstrapData) return;
@@ -734,18 +735,46 @@ function runOptimizer() {
   const maxPerTeam = 3;
   const limits = { 1: 2, 2: 5, 3: 5, 4: 3 };
 
-  const result = solveOptimizerFull(budget, allPlayers, maxPerTeam, limits);
-  optimizerSquad = result.squad;
+  const lockedPlayers = optimizerLockedIds
+    .map(id => allPlayers.find(p => p.id === id))
+    .filter(Boolean);
+
+  const lockedCost = lockedPlayers.reduce((s, p) => s + p.now_cost, 0);
+  const remainingBudget = budget - lockedCost;
+
+  const lockedPosCounts = { 1: 0, 2: 0, 3: 0, 4: 0 };
+  const lockedTeamCount = {};
+  for (const p of lockedPlayers) {
+    lockedPosCounts[p.element_type] = (lockedPosCounts[p.element_type] || 0) + 1;
+    lockedTeamCount[p.team] = (lockedTeamCount[p.team] || 0) + 1;
+  }
+
+  const adjustedLimits = {};
+  for (const pos of [1, 2, 3, 4]) {
+    adjustedLimits[pos] = limits[pos] - (lockedPosCounts[pos] || 0);
+  }
+
+  const result = solveOptimizerFull(remainingBudget, allPlayers, maxPerTeam, adjustedLimits, lockedPlayers, lockedTeamCount);
+  
+  if (result.success) {
+    optimizerSquad = [...lockedPlayers.map(p => ({ ...p, _locked: true })), ...result.squad];
+  } else {
+    optimizerSquad = [...lockedPlayers.map(p => ({ ...p, _locked: true }))];
+  }
 
   if (!result.success) {
     const lang = getLang();
+    const msg = lockedPlayers.length > 0
+      ? (lang === "pl" ? "Nie udało się dobrać pozostałych zawodników do zablokowanych. Zwiększ budżet lub zmień zablokowanych." : "Could not fill remaining slots with locked players. Increase budget or change locked players.")
+      : (lang === "pl" ? "Nie udało się wybrać 15 zawodników w tym budżecie. Zwiększ budżet na suwaku." : "Could not select 15 players within this budget. Increase the budget slider.");
     document.getElementById("optimizer-pitch").innerHTML = `<div style="padding:40px;text-align:center;color:var(--red)">
       <div style="font-size:1.1rem;font-weight:600;margin-bottom:6px">${lang === "pl" ? "Za mały budżet" : "Budget too low"}</div>
-      <div style="font-size:0.9rem;color:var(--text-dim)">${lang === "pl" ? "Nie udało się wybrać 15 zawodników w tym budżecie. Zwiększ budżet na suwaku." : "Could not select 15 players within this budget. Increase the budget slider."}</div>
+      <div style="font-size:0.9rem;color:var(--text-dim)">${msg}</div>
     </div>`;
     document.getElementById("optimizer-pitch-wrap").style.display = "";
     document.getElementById("optimizer-placeholder").style.display = "none";
     document.getElementById("optimizer-charts").style.display = "none";
+    renderOptimizer();
     return;
   }
 
@@ -756,7 +785,9 @@ function runOptimizer() {
   renderOptimizerCharts();
 }
 
-function solveOptimizerFull(budget, allPlayers, maxPerTeam, limits) {
+function solveOptimizerFull(budget, allPlayers, maxPerTeam, limits, lockedPlayers, lockedTeamCount) {
+  lockedPlayers = lockedPlayers || [];
+  lockedTeamCount = lockedTeamCount || {};
   const byPos = { 1: [], 2: [], 3: [], 4: [] };
   for (const p of allPlayers) {
     if (p.element_type in byPos) byPos[p.element_type].push(p);
@@ -793,7 +824,7 @@ function solveOptimizerFull(budget, allPlayers, maxPerTeam, limits) {
   }
 
   const squad = [];
-  const teamCount = {};
+  const teamCount = { ...lockedTeamCount };
   const squadIds = new Set();
   const totalSlots = Object.values(limits).reduce((a, b) => a + b, 0);
 
@@ -899,11 +930,13 @@ function renderOptimizer() {
     const teamAbbr = getTeamName(p.team) || "";
     const unofficial = p._unofficialPrice
       ? `<span class="pitch-jersey-unofficial" title="${lang === "pl" ? "Cena nieoficjalna" : "Unofficial price"}">★</span>` : "";
+    const locked = p._locked
+      ? `<span class="pitch-jersey-locked" title="${lang === "pl" ? "Zawodnik na sztywno" : "Locked player"}">🔒</span>` : "";
     return `<div class="pitch-jersey">
       <div class="pitch-jersey-body" style="background:${color};box-shadow:inset 0 -10px 14px ${dark}, 0 2px 6px rgba(0,0,0,0.4)">
-        <span style="position:relative;z-index:1;text-align:center;line-height:1.15;font-size:0.68rem;padding:2px">${p.web_name}</span>
+        <span style="position:relative;z-index:1;text-align:center;line-height:1.15;font-size:0.72rem;font-weight:800;padding:2px">${p.web_name}</span>
         <span class="pitch-jersey-badge">${teamAbbr}</span>
-        ${unofficial}
+        ${unofficial}${locked}
       </div>
       <div class="pitch-jersey-name">${p.web_name}</div>
       <div class="pitch-jersey-info">${(p.now_cost / 10).toFixed(1)}m · ${p.total_points} pkt</div>
@@ -941,9 +974,10 @@ function renderOptimizer() {
     const color = TEAM_COLORS[p.team] || "#555";
     const posClass = `pos-${getPositionShort(p.element_type).toLowerCase()}`;
     const priceLabel = p._unofficialPrice ? `<span title="${lang === "pl" ? "Cena nieoficjalna" : "Unofficial price"}" style="color:#f59e0b;cursor:help">★</span> ` : "";
-    return `<tr>
+    const lockLabel = p._locked ? `<span title="${lang === "pl" ? "Zawodnik na sztywno" : "Locked player"}" style="font-size:0.75rem;margin-right:3px">🔒</span>` : "";
+    return `<tr style="${p._locked ? 'background:rgba(37,99,235,0.08)' : ''}">
       <td class="rank-num">${i + 1}</td>
-      <td>${p.web_name}</td>
+      <td>${lockLabel}${p.web_name}</td>
       <td><span class="team-color" style="background:${color}"></span>${getTeamName(p.team)}</td>
       <td><span class="pos-badge ${posClass}">${getPositionShort(p.element_type)}</span></td>
       <td class="stat-val">${priceLabel}${(p.now_cost / 10).toFixed(1)}</td>
@@ -3494,6 +3528,82 @@ function initOptimizer() {
       document.getElementById("optimizer-pitch-table").style.display = view === "table" ? "" : "none";
     });
   }
+  document.getElementById("optimizer-add-locked").addEventListener("click", () => {
+    if (bootstrapData) addLockedPlayerRow();
+  });
+}
+
+function addLockedPlayerRow() {
+  const list = document.getElementById("optimizer-locked-list");
+  const allPlayers = bootstrapData.elements.filter(p => p.minutes > 0 || p.total_points > 0);
+  const usedIds = new Set(optimizerLockedIds);
+  const options = allPlayers
+    .filter(p => !usedIds.has(p.id))
+    .sort((a, b) => b.total_points - a.total_points)
+    .map(p => {
+      const teamName = getTeamName(p.team);
+      const pos = getPositionShort(p.element_type);
+      return `<option value="${p.id}">${p.web_name} (${teamName} ${pos}) ${(p.now_cost / 10).toFixed(1)}m</option>`;
+    }).join("");
+
+  const row = document.createElement("div");
+  row.className = "optimizer-locked-row";
+  row.innerHTML = `
+    <select class="optimizer-locked-select">${options}</select>
+    <span class="optimizer-locked-cost" style="font-size:0.8rem;color:var(--text-dim);min-width:40px"></span>
+    <button class="optimizer-locked-remove" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:1.1rem;padding:2px 6px" title="Usuń">✕</button>`;
+  list.appendChild(row);
+
+  const select = row.querySelector("select");
+  const costSpan = row.querySelector(".optimizer-locked-cost");
+  const removeBtn = row.querySelector(".optimizer-locked-remove");
+
+  select.addEventListener("change", () => {
+    const pid = parseInt(select.value);
+    const player = allPlayers.find(p => p.id === pid);
+    if (!player) return;
+    optimizerLockedIds.push(pid);
+    costSpan.textContent = `${(player.now_cost / 10).toFixed(1)}m`;
+    updateLockedInfo();
+    if (player._unofficialPrice) {
+      costSpan.innerHTML += ` <span style="color:#f59e0b" title="Cena nieoficjalna">★</span>`;
+    }
+    select.disabled = true;
+    removeBtn.style.display = "";
+    addLockedPlayerRow();
+  });
+
+  select.addEventListener("focus", () => {
+    const currentUsed = new Set(optimizerLockedIds);
+    const opts = select.querySelectorAll("option");
+    opts.forEach(opt => {
+      opt.style.display = currentUsed.has(parseInt(opt.value)) ? "none" : "";
+    });
+  });
+
+  removeBtn.addEventListener("click", () => {
+    const pid = parseInt(select.value);
+    optimizerLockedIds = optimizerLockedIds.filter(id => id !== pid);
+    row.remove();
+    updateLockedInfo();
+  });
+
+  if (options === "") row.remove();
+}
+
+function updateLockedInfo() {
+  const lang = getLang();
+  const info = document.getElementById("optimizer-locked-info");
+  if (optimizerLockedIds.length === 0) {
+    info.textContent = "";
+    return;
+  }
+  const allPlayers = getOptimizedPlayers();
+  const lockedCost = optimizerLockedIds.reduce((s, id) => {
+    const p = allPlayers.find(x => x.id === id);
+    return s + (p ? p.now_cost : 0);
+  }, 0);
+  info.textContent = `${optimizerLockedIds.length} ${lang === "pl" ? "zaw." : "players"} · ${(lockedCost / 10).toFixed(1)}m`;
 }
 
 function initKetchup() {
