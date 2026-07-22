@@ -183,7 +183,7 @@ function showSection(sectionId, state) {
   if (table) table.style.display = state === "table" ? "" : "none";
   if (charts && state !== "table") charts.style.display = "none";
   if (result && state !== "result") result.style.display = "none";
-  if (chartWrap && state !== "chart") chartWrap.style.display = "none";
+  if (chartWrap && state !== "chart" && state !== "table") chartWrap.style.display = "none";
 }
 
 function updateOptimizerSlider() {
@@ -788,9 +788,10 @@ function runOptimizer() {
 function solveOptimizerFull(budget, allPlayers, maxPerTeam, limits, lockedPlayers, lockedTeamCount) {
   lockedPlayers = lockedPlayers || [];
   lockedTeamCount = lockedTeamCount || {};
+  const lockedIds = new Set(lockedPlayers.map(p => p.id));
   const byPos = { 1: [], 2: [], 3: [], 4: [] };
   for (const p of allPlayers) {
-    if (p.element_type in byPos) byPos[p.element_type].push(p);
+    if (p.element_type in byPos && !lockedIds.has(p.id)) byPos[p.element_type].push(p);
   }
 
   for (const pos of Object.keys(byPos)) {

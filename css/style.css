@@ -248,8 +248,13 @@ a:hover { text-decoration: underline; }
   height: auto;
 }
 
+.chart-svg rect, .chart-svg circle, .chart-svg path {
+  pointer-events: all;
+}
+
 .chart-bar {
   transition: opacity 0.15s;
+  cursor: pointer;
 }
 
 .chart-bar:hover {
