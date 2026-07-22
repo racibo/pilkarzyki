@@ -228,7 +228,7 @@ async function loadData() {
 
 const UNOFFICIAL_PRICES = [
   { name: "Haaland", now_cost: 155 },
-  { name: "Bruno Fernandes", now_cost: 120 },
+  { name: "B.Fernandes", now_cost: 120 },
 ];
 
 function applyUnofficialPrices(data) {
