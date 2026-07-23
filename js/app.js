@@ -13,6 +13,38 @@ let top15AllData = {};
 let top15Tab = "points";
 let squadMap = null;
 
+const _ttEl = document.createElement("div");
+_ttEl.className = "chart-tooltip";
+document.body.appendChild(_ttEl);
+window._chartTT = { show(evt, html, pi) {
+  _ttEl.innerHTML = html;
+  _ttEl.classList.add("visible");
+  this.move(evt);
+  if (pi !== undefined) {
+    const svg = evt.target.closest("svg");
+    if (svg) {
+      svg.querySelectorAll(".chart-line").forEach(l => l.classList.toggle("dimmed", l.dataset.pi !== String(pi)));
+      svg.querySelectorAll(".chart-dot").forEach(d => { if (d.dataset.pi === String(pi)) d.setAttribute("r", "5"); });
+    }
+  }
+}, hide() {
+  _ttEl.classList.remove("visible");
+  document.querySelectorAll(".chart-line.dimmed").forEach(l => l.classList.remove("dimmed"));
+  document.querySelectorAll(".chart-dot-hl").forEach(d => d.setAttribute("r", "3"));
+  document.querySelectorAll(".chart-dot").forEach(d => d.setAttribute("r", "3"));
+},
+move(evt) {
+  if (!_ttEl.classList.contains("visible")) return;
+  const r = _ttEl.getBoundingClientRect();
+  let x = evt.clientX + 12, y = evt.clientY - 10;
+  if (x + r.width > window.innerWidth - 8) x = evt.clientX - r.width - 12;
+  if (y + r.height > window.innerHeight - 8) y = evt.clientY - r.height - 10;
+  if (y < 4) y = 4;
+  _ttEl.style.left = x + "px";
+  _ttEl.style.top = y + "px";
+}};
+document.addEventListener("mousemove", e => window._chartTT.move(e));
+
 const TEAM_COLORS = {
   1: "#e30613", 2: "#670e36", 3: "#da291c", 4: "#e30613",
   5: "#0057b8", 6: "#034694", 7: "#6cb4ee", 8: "#c4122e",
@@ -637,13 +669,21 @@ function renderKetchupChart(player, data, startGW, maxGW) {
       xpPath += ` L ${x} ${yXP}`;
     }
 
-    actualDots += `<circle cx="${x}" cy="${yActual}" r="4" fill="#3b82f6" stroke="var(--bg-card)" stroke-width="2">
-      <title>GW${d.round}: ${d.total_points} pkt (${d.goals_scored || 0}G ${d.assists || 0}A)</title>
-    </circle>`;
+    const actualTt = `<div class="tt-name">${player.web_name}</div><span class="tt-dim">GW${d.round}:</span> <span class="tt-val">${d.total_points} pkt</span> <span class="tt-dim">(${d.goals_scored || 0}G ${d.assists || 0}A)</span>`;
+    const xpTt = `<div class="tt-name">${player.web_name}</div><span class="tt-dim">GW${d.round}:</span> <span class="tt-val">~${d.xPts.toFixed(1)} pkt</span> <span class="tt-dim">(xP)</span>`;
+    actualDots += `<circle cx="${x}" cy="${yActual}" r="4" fill="#3b82f6" stroke="var(--bg-card)" stroke-width="2"
+      onmouseenter="window._chartTT.show(event, this.getAttribute('data-tt'))"
+      onmouseleave="window._chartTT.hide()" data-tt="${actualTt.replace(/"/g, '&quot;')}"/>`;
+    actualDots += `<circle class="chart-hover-dot" cx="${x}" cy="${yActual}"
+      onmouseenter="window._chartTT.show(event, this.getAttribute('data-tt'))"
+      onmouseleave="window._chartTT.hide()" data-tt="${actualTt.replace(/"/g, '&quot;')}"/>`;
 
-    xpDots += `<circle cx="${x}" cy="${yXP}" r="4" fill="${XP_COLOR}" stroke="var(--bg-card)" stroke-width="2">
-      <title>GW${d.round}: ~${d.xPts.toFixed(1)} pkt (xP)</title>
-    </circle>`;
+    xpDots += `<circle cx="${x}" cy="${yXP}" r="4" fill="${XP_COLOR}" stroke="var(--bg-card)" stroke-width="2"
+      onmouseenter="window._chartTT.show(event, this.getAttribute('data-tt'))"
+      onmouseleave="window._chartTT.hide()" data-tt="${xpTt.replace(/"/g, '&quot;')}"/>`;
+    xpDots += `<circle class="chart-hover-dot" cx="${x}" cy="${yXP}"
+      onmouseenter="window._chartTT.show(event, this.getAttribute('data-tt'))"
+      onmouseleave="window._chartTT.hide()" data-tt="${xpTt.replace(/"/g, '&quot;')}"/>`;
 
     xLabels += `<text class="chart-label" x="${x}" y="${pad.top + chartH + 18}" text-anchor="middle" font-size="10">${d.round}</text>`;
   });
@@ -1117,9 +1157,13 @@ function renderBudgetSensitivityChart() {
   let dots = "";
   points.forEach((p) => {
     xLabels += `<text class="chart-label" x="${p.x}" y="${pad.top + chartH + 18}" text-anchor="middle" font-size="10">${p.budget}m</text>`;
-    dots += `<circle class="chart-dot" cx="${p.x}" cy="${p.y}" r="4">
-      <title>Budżet: ${p.budget}m → ${p.pts} pkt</title>
-    </circle>`;
+    const ttHtml = `<div class="tt-name">Budżet: ${p.budget}m</div><span class="tt-val">${p.pts} pkt</span>`;
+    dots += `<circle class="chart-dot" cx="${p.x}" cy="${p.y}" r="4"
+      onmouseenter="window._chartTT.show(event, this.getAttribute('data-tt'))"
+      onmouseleave="window._chartTT.hide()" data-tt="${ttHtml.replace(/"/g, '&quot;')}"/>`;
+    dots += `<circle class="chart-hover-dot" cx="${p.x}" cy="${p.y}"
+      onmouseenter="window._chartTT.show(event, this.getAttribute('data-tt'))"
+      onmouseleave="window._chartTT.hide()" data-tt="${ttHtml.replace(/"/g, '&quot;')}"/>`;
   });
 
   container.innerHTML = `<svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg">
@@ -1997,15 +2041,29 @@ async function runPriceHistoryMultiSeason() {
   const range = maxP - minP || 1;
 
   let paths = "";
-  for (const sd of allSeasonData) {
+  allSeasonData.forEach((sd, si) => {
     let d = "";
+    const pts = [];
     sd.data.forEach((pt, i) => {
       const x = pad.left + ((pt.gw - 1) / 37) * chartW;
       const y = pad.top + chartH - ((pt.value - minP) / range) * chartH * 0.85 - chartH * 0.05;
       d += (i === 0 ? "M" : "L") + ` ${x} ${y}`;
+      pts.push({ x, y, gw: pt.gw, value: pt.value });
     });
-    paths += `<path d="${d}" fill="none" stroke="${sd.color}" stroke-width="2.5" opacity="0.85"><title>${sd.season}</title></path>`;
-  }
+    const ttHtml = pts.map(pt => `<span class="tt-dim">GW${pt.gw}:</span> <span class="tt-val">${pt.value.toFixed(1)}m</span>`).join("<br>");
+    const tooltipHtml = `<div class="tt-name" style="color:${sd.color}">${sd.season}</div>${ttHtml}`;
+    paths += `<path class="chart-line" data-pi="${si}" d="${d}" fill="none" stroke="${sd.color}" stroke-width="2.5" opacity="0.85"/>`;
+    paths += `<path class="chart-hover-line" data-pi="${si}" d="${d}" stroke-width="18"
+      onmouseenter="window._chartTT.show(event, this.getAttribute('data-tt'), ${si})"
+      onmouseleave="window._chartTT.hide()" data-tt="${tooltipHtml.replace(/"/g, '&quot;')}"/>`;
+    pts.forEach(pt => {
+      paths += `<circle class="chart-dot" data-pi="${si}" cx="${pt.x}" cy="${pt.y}" r="3" fill="${sd.color}" stroke="#0f172a" stroke-width="1.5"/>`;
+      const ptTt = `<div class='tt-name' style='color:${sd.color}'>${sd.season}</div><span class='tt-dim'>GW${pt.gw}:</span> <span class='tt-val'>${pt.value.toFixed(1)}m</span>`;
+      paths += `<circle class="chart-hover-dot" data-pi="${si}" cx="${pt.x}" cy="${pt.y}"
+        onmouseenter="window._chartTT.show(event, this.getAttribute('data-tt'), ${si})"
+        onmouseleave="window._chartTT.hide()" data-tt="${ptTt.replace(/"/g, '&quot;')}"/>`;
+    });
+  });
 
   let yTicks = "";
   for (let i = 0; i <= 5; i++) {
@@ -2014,19 +2072,11 @@ async function runPriceHistoryMultiSeason() {
     yTicks += `<text class="chart-label" x="${pad.left - 6}" y="${y + 3}" text-anchor="end" font-size="10">${val.toFixed(1)}m</text>`;
   }
 
-  let legend = `<g transform="translate(${pad.left}, 8)">`;
-  allSeasonData.forEach((sd, i) => {
-    const lx = i * 80;
-    legend += `<rect x="${lx}" y="0" width="16" height="3" fill="${sd.color}" rx="1"/>`;
-    legend += `<text x="${lx + 20}" y="6" font-size="10" fill="var(--text-dim)" font-family="sans-serif">${sd.season}</text>`;
-  });
-  legend += `</g>`;
-
   document.getElementById("pricehistory-chart").innerHTML = `
     <svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg">
       <line class="chart-axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + chartH}"/>
       <line class="chart-axis" x1="${pad.left}" y1="${pad.top + chartH}" x2="${pad.left + chartW}" y2="${pad.top + chartH}"/>
-      ${yTicks}${paths}${legend}
+      ${yTicks}${paths}
     </svg>`;
 
   renderPriceHistoryMovers();
@@ -2096,9 +2146,13 @@ function renderPriceHistoryChartHistory(history, playerId) {
     const y = pad.top + chartH - ((p - minP) / range) * chartH * 0.85 - chartH * 0.05;
     if (i === 0) path = `M ${x} ${y}`;
     else path += ` L ${x} ${y}`;
-    dots += `<circle cx="${x}" cy="${y}" r="3.5" fill="${color}" stroke="var(--bg-card)" stroke-width="2">
-      <title>GW${rounds[i]}: ${p.toFixed(1)}m</title>
-    </circle>`;
+    const ttHtml = `<div class="tt-name">${player.web_name}</div><span class="tt-dim">GW${rounds[i]}:</span> <span class="tt-val">${p.toFixed(1)}m</span>`;
+    dots += `<circle cx="${x}" cy="${y}" r="3.5" fill="${color}" stroke="var(--bg-card)" stroke-width="2"
+      onmouseenter="window._chartTT.show(event, this.getAttribute('data-tt'))"
+      onmouseleave="window._chartTT.hide()" data-tt="${ttHtml.replace(/"/g, '&quot;')}"/>`;
+    dots += `<circle class="chart-hover-dot" cx="${x}" cy="${y}"
+      onmouseenter="window._chartTT.show(event, this.getAttribute('data-tt'))"
+      onmouseleave="window._chartTT.hide()" data-tt="${ttHtml.replace(/"/g, '&quot;')}"/>`;
     if (prices.length <= 20 || i % Math.ceil(prices.length / 20) === 0) {
       xLabels += `<text class="chart-label" x="${x}" y="${pad.top + chartH + 18}" text-anchor="middle" font-size="10">${rounds[i]}</text>`;
     }
@@ -2201,9 +2255,13 @@ function renderPriceHistoryChartCSV(gwData, player, season) {
     const y = pad.top + chartH - ((p - minP) / range) * chartH * 0.85 - chartH * 0.05;
     if (i === 0) path = `M ${x} ${y}`;
     else path += ` L ${x} ${y}`;
-    dots += `<circle cx="${x}" cy="${y}" r="3.5" fill="${color}" stroke="var(--bg-card)" stroke-width="2">
-      <title>GW${rounds[i]}: ${p.toFixed(1)}m</title>
-    </circle>`;
+    const ttHtml = `<div class="tt-name">${player.web_name}</div><span class="tt-dim">GW${rounds[i]}:</span> <span class="tt-val">${p.toFixed(1)}m</span>`;
+    dots += `<circle cx="${x}" cy="${y}" r="3.5" fill="${color}" stroke="var(--bg-card)" stroke-width="2"
+      onmouseenter="window._chartTT.show(event, this.getAttribute('data-tt'))"
+      onmouseleave="window._chartTT.hide()" data-tt="${ttHtml.replace(/"/g, '&quot;')}"/>`;
+    dots += `<circle class="chart-hover-dot" cx="${x}" cy="${y}"
+      onmouseenter="window._chartTT.show(event, this.getAttribute('data-tt'))"
+      onmouseleave="window._chartTT.hide()" data-tt="${ttHtml.replace(/"/g, '&quot;')}"/>`;
     if (prices.length <= 20 || i % Math.ceil(prices.length / 20) === 0) {
       xLabels += `<text class="chart-label" x="${x}" y="${pad.top + chartH + 18}" text-anchor="middle" font-size="10">${rounds[i]}</text>`;
     }
@@ -2415,34 +2473,40 @@ function renderTop15Charts() {
       xTicks += `<text class="chart-label" x="${x}" y="${svgH - pad.bottom + 18}" text-anchor="middle" font-size="10">GW${gws[i]}</text>`;
     }
 
+    const posNames = { 1: "GKP", 2: "DEF", 3: "MID", 4: "FWD" };
+    const ttPtsLabel = lang === "pl" ? "pkt" : "pts";
     players.forEach((p, pi) => {
       const color = colors[pi % colors.length];
       let d = "";
+      const pts = [];
       for (let i = 0; i < gws.length; i++) {
         const x = pad.left + (gws.length > 1 ? (i / (gws.length - 1)) * chartW : chartW / 2);
         const y = pad.top + chartH - (p.cumulative[i] / maxVal) * chartH;
         d += (i === 0 ? "M" : "L") + ` ${x} ${y}`;
+        pts.push({ x, y, gw: gws[i], cum: p.cumulative[i], gwPts: p.gwPts[gws[i]] || 0 });
       }
-      paths += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2"><title>${p.name} (${p.total} ${lang === "pl" ? " pkt" : " pts"})</title></path>`;
-      const lastX = pad.left + (gws.length > 1 ? chartW : chartW / 2);
-      const lastY = pad.top + chartH - (p.cumulative[gws.length - 1] / maxVal) * chartH;
-      paths += `<circle cx="${lastX}" cy="${lastY}" r="3" fill="${color}"/>`;
+      const ttHtml = pts.map(pt => `<span class="tt-dim">GW${pt.gw}:</span> <span class="tt-val">${pt.cum}</span> ${ttPtsLabel} <span class="tt-dim">(+${pt.gwPts})</span>`).join("<br>");
+      const tooltipHtml = `<div class="tt-name" style="color:${color}">${p.name} <span class="tt-dim">${posNames[p.position] || ""}</span></div>${ttHtml}<div class="tt-dim">Σ ${p.total} ${ttPtsLabel}</div>`;
+      paths += `<path class="chart-line" data-pi="${pi}" d="${d}" fill="none" stroke="${color}" stroke-width="2.5"/>`;
+      paths += `<path class="chart-hover-line" data-pi="${pi}" d="${d}" stroke-width="18"
+        onmouseenter="window._chartTT.show(event, this.getAttribute('data-tt'), ${pi})"
+        onmouseleave="window._chartTT.hide()" data-tt="${tooltipHtml.replace(/"/g, '&quot;')}"/>`;
+      pts.forEach(pt => {
+        paths += `<circle class="chart-dot" data-pi="${pi}" cx="${pt.x}" cy="${pt.y}" r="3" fill="${color}" stroke="#0f172a" stroke-width="1.5"/>`;
+        const ptTt = `<div class='tt-name' style='color:${color}'>${p.name}</div><span class='tt-dim'>GW${pt.gw}:</span> <span class='tt-val'>${pt.cum}</span> ${ttPtsLabel} <span class='tt-dim'>(+${pt.gwPts})</span>`;
+        paths += `<circle class="chart-hover-dot" data-pi="${pi}" cx="${pt.x}" cy="${pt.y}"
+          onmouseenter="window._chartTT.show(event, this.getAttribute('data-tt'), ${pi})"
+          onmouseleave="window._chartTT.hide()" data-tt="${ptTt.replace(/"/g, '&quot;')}"/>`;
+      });
     });
-
-    let legend = `<g transform="translate(${pad.left}, 8)">`;
-    players.forEach((p, i) => {
-      const lx = i * 60;
-      legend += `<rect x="${lx}" y="0" width="10" height="10" fill="${colors[i % colors.length]}" rx="2"/>`;
-      legend += `<text x="${lx + 14}" y="9" font-size="8" fill="var(--text-dim)" font-family="sans-serif">${p.name}</text>`;
-    });
-    legend += `</g>`;
 
     container.innerHTML = `
       <h3 class="chart-title" style="margin-bottom:8px">${lang === "pl" ? "Kumulatywne punkty – Top 15 strzelców" : "Cumulative Points – Top 15 Scorers"}</h3>
-      <svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg">
+      <svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg"
+        onmousemove="this._ttMove(event)">
         <line class="chart-axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + chartH}"/>
         <line class="chart-axis" x1="${pad.left}" y1="${pad.top + chartH}" x2="${pad.left + chartW}" y2="${pad.top + chartH}"/>
-        ${yTicks}${xTicks}${paths}${legend}
+        ${yTicks}${xTicks}${paths}
       </svg>`;
 
   } else {
@@ -2483,38 +2547,40 @@ function renderTop15Charts() {
     players.forEach((p, pi) => {
       const color = colors[pi % colors.length];
       let d = "";
+      const pts = [];
       for (let i = 0; i < gws.length; i++) {
         const x = pad.left + (gws.length > 1 ? (i / (gws.length - 1)) * chartW : chartW / 2);
         const ownVal = p.gwOwn[gws[i]];
         const y = ownVal !== undefined
           ? pad.top + chartH - (ownVal / maxVal) * chartH
           : null;
-        if (y !== null) d += (d === "" ? "M" : "L") + ` ${x} ${y}`;
+        if (y !== null) {
+          d += (d === "" ? "M" : "L") + ` ${x} ${y}`;
+          pts.push({ x, y, gw: gws[i], own: ownVal });
+        }
       }
-      if (d) paths += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2"><title>${p.name} (avg: ${p.avgOwn.toFixed(1)}%)</title></path>`;
-      const lastGW = gws[gws.length - 1];
-      const lastOwn = p.gwOwn[lastGW];
-      if (lastOwn !== undefined) {
-        const lastX = pad.left + (gws.length > 1 ? chartW : chartW / 2);
-        const lastY = pad.top + chartH - (lastOwn / maxVal) * chartH;
-        paths += `<circle cx="${lastX}" cy="${lastY}" r="3" fill="${color}"/>`;
-      }
+      if (!d) return;
+      const ttHtml = pts.map(pt => `<span class="tt-dim">GW${pt.gw}:</span> <span class="tt-val">${pt.own.toFixed(1)}%</span>`).join("<br>");
+      const tooltipHtml = `<div class="tt-name" style="color:${color}">${p.name}</div>${ttHtml}<div class="tt-dim">avg: ${p.avgOwn.toFixed(1)}%</div>`;
+      paths += `<path class="chart-line" data-pi="${pi}" d="${d}" fill="none" stroke="${color}" stroke-width="2.5"/>`;
+      paths += `<path class="chart-hover-line" data-pi="${pi}" d="${d}" stroke-width="18"
+        onmouseenter="window._chartTT.show(event, this.getAttribute('data-tt'), ${pi})"
+        onmouseleave="window._chartTT.hide()" data-tt="${tooltipHtml.replace(/"/g, '&quot;')}"/>`;
+      pts.forEach(pt => {
+        paths += `<circle class="chart-dot" data-pi="${pi}" cx="${pt.x}" cy="${pt.y}" r="3" fill="${color}" stroke="#0f172a" stroke-width="1.5"/>`;
+        const ptTt = `<div class='tt-name' style='color:${color}'>${p.name}</div><span class='tt-dim'>GW${pt.gw}:</span> <span class='tt-val'>${pt.own.toFixed(1)}%</span>`;
+        paths += `<circle class="chart-hover-dot" data-pi="${pi}" cx="${pt.x}" cy="${pt.y}"
+          onmouseenter="window._chartTT.show(event, this.getAttribute('data-tt'), ${pi})"
+          onmouseleave="window._chartTT.hide()" data-tt="${ptTt.replace(/"/g, '&quot;')}"/>`;
+      });
     });
-
-    let legend = `<g transform="translate(${pad.left}, 8)">`;
-    players.forEach((p, i) => {
-      const lx = i * 60;
-      legend += `<rect x="${lx}" y="0" width="10" height="10" fill="${colors[i % colors.length]}" rx="2"/>`;
-      legend += `<text x="${lx + 14}" y="9" font-size="8" fill="var(--text-dim)" font-family="sans-serif">${p.name}</text>`;
-    });
-    legend += `</g>`;
 
     container.innerHTML = `
       <h3 class="chart-title" style="margin-bottom:8px">${lang === "pl" ? "Posiadanie Top 15 – % menedżerów" : "Ownership % – Top 15 Most-Owned"}</h3>
       <svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg">
         <line class="chart-axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + chartH}"/>
         <line class="chart-axis" x1="${pad.left}" y1="${pad.top + chartH}" x2="${pad.left + chartW}" y2="${pad.top + chartH}"/>
-        ${yTicks}${xTicks}${paths}${legend}
+        ${yTicks}${xTicks}${paths}
       </svg>`;
   }
 
