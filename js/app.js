@@ -2314,11 +2314,14 @@ async function runTop15() {
 
   try {
     const batchSize = 5;
-    const elementById = {};
-    if (bootstrapData.players) {
-      for (const p of bootstrapData.players) elementById[p.id] = p;
-    }
     let totalManagers = 0;
+    const nameToElement = {};
+    if (bootstrapData.elements) {
+      for (const p of bootstrapData.elements) {
+        nameToElement[p.web_name.toLowerCase()] = p;
+        nameToElement[p.first_name?.toLowerCase()] = p;
+      }
+    }
     for (let batchStart = startGW; batchStart <= endGW; batchStart += batchSize) {
       const batchEnd = Math.min(batchStart + batchSize - 1, endGW);
       const promises = [];
@@ -2342,10 +2345,18 @@ async function runTop15() {
         }
         const posMap = { "GKP": 1, "DEF": 2, "MID": 3, "FWD": 4 };
         if (totalManagers === 0 && csvData.length > 0) {
-          const ref = csvData.find(r => r.element && elementById[parseInt(r.element)] && parseFloat(elementById[parseInt(r.element)].selected_by_percent) > 0);
-          if (ref) {
-            const bp = elementById[parseInt(ref.element)];
-            totalManagers = parseInt(ref.selected) / (parseFloat(bp.selected_by_percent) / 100);
+          for (const r of csvData) {
+            const sel = parseInt(r.selected) || 0;
+            if (sel <= 0) continue;
+            const match = nameToElement[r.name?.toLowerCase()];
+            if (match && parseFloat(match.selected_by_percent) > 0) {
+              totalManagers = Math.round(sel / (parseFloat(match.selected_by_percent) / 100));
+              break;
+            }
+          }
+          if (totalManagers === 0) {
+            const maxSel = Math.max(...csvData.map(r => parseInt(r.selected) || 0));
+            if (maxSel > 0) totalManagers = Math.round(maxSel / 0.5);
           }
         }
         top15AllData[gw] = csvData.map((r) => ({
