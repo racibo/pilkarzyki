@@ -2315,20 +2315,6 @@ async function runTop15() {
   try {
     const batchSize = 5;
     let totalManagers = 0;
-    const nameToElement = {};
-    if (bootstrapData.elements) {
-      for (const p of bootstrapData.elements) {
-        nameToElement[p.web_name.toLowerCase()] = p;
-        nameToElement[p.first_name?.toLowerCase()] = p;
-        const last = p.last_name || p.web_name;
-        const fullName = `${p.first_name || ""} ${last}`.trim().toLowerCase();
-        if (fullName) nameToElement[fullName] = p;
-        const shortLower = p.short_name?.toLowerCase();
-        if (shortLower) nameToElement[shortLower] = p;
-        const lastLower = last.toLowerCase();
-        if (lastLower) nameToElement[lastLower] = p;
-      }
-    }
 
     const seasonGWs = { "2025-26": 38, "2024-25": 38, "2023-24": 38, "2022-23": 38 };
     const totalGWs = seasonGWs[season] || 38;
@@ -2359,20 +2345,8 @@ async function runTop15() {
         const posMap = { "GKP": 1, "DEF": 2, "MID": 3, "FWD": 4 };
 
         if (totalManagers === 0 && csvData.length > 0) {
-          for (const r of csvData) {
-            const sel = parseInt(r.selected) || 0;
-            if (sel <= 0) continue;
-            const nameL = r.name?.toLowerCase();
-            const match = nameL && nameToElement[nameL];
-            if (match && parseFloat(match.selected_by_percent) > 0) {
-              totalManagers = Math.round(sel / (parseFloat(match.selected_by_percent) / 100));
-              break;
-            }
-          }
-          if (totalManagers === 0) {
-            const maxSel = Math.max(...csvData.map(r => parseInt(r.selected) || 0));
-            if (maxSel > 0) totalManagers = Math.round(maxSel / 0.5);
-          }
+          const sumSelected = csvData.reduce((acc, r) => acc + (parseInt(r.selected) || 0), 0);
+          if (sumSelected > 0) totalManagers = Math.round(sumSelected / 15);
         }
         top15AllData[gw] = csvData.map((r) => ({
           name: r.name || "",
