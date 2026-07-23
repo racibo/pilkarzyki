@@ -2300,7 +2300,7 @@ function initTop15() {
 async function runTop15() {
   if (!bootstrapData) return;
   const startGW = parseInt(document.getElementById("top15-gw-start").value);
-  const endGW = parseInt(document.getElementById("top15-gw-end").value);
+  let endGW = parseInt(document.getElementById("top15-gw-end").value);
   if (!startGW || !endGW || startGW > endGW) return;
 
   showSection("top15", "loading");
@@ -2320,8 +2320,20 @@ async function runTop15() {
       for (const p of bootstrapData.elements) {
         nameToElement[p.web_name.toLowerCase()] = p;
         nameToElement[p.first_name?.toLowerCase()] = p;
+        const last = p.last_name || p.web_name;
+        const fullName = `${p.first_name || ""} ${last}`.trim().toLowerCase();
+        if (fullName) nameToElement[fullName] = p;
+        const shortLower = p.short_name?.toLowerCase();
+        if (shortLower) nameToElement[shortLower] = p;
+        const lastLower = last.toLowerCase();
+        if (lastLower) nameToElement[lastLower] = p;
       }
     }
+
+    const seasonGWs = { "2025-26": 38, "2024-25": 38, "2023-24": 38, "2022-23": 38 };
+    const totalGWs = seasonGWs[season] || 38;
+    if (endGW > totalGWs) endGW = totalGWs;
+
     for (let batchStart = startGW; batchStart <= endGW; batchStart += batchSize) {
       const batchEnd = Math.min(batchStart + batchSize - 1, endGW);
       const promises = [];
@@ -2336,6 +2348,7 @@ async function runTop15() {
       const results = await Promise.all(promises);
       results.forEach((csvData, i) => {
         const gw = batchStart + i;
+        if (!csvData || csvData.length === 0) return;
         const teamNameToId = {};
         if (bootstrapData.teams) {
           for (const team of bootstrapData.teams) {
@@ -2344,11 +2357,13 @@ async function runTop15() {
           }
         }
         const posMap = { "GKP": 1, "DEF": 2, "MID": 3, "FWD": 4 };
+
         if (totalManagers === 0 && csvData.length > 0) {
           for (const r of csvData) {
             const sel = parseInt(r.selected) || 0;
             if (sel <= 0) continue;
-            const match = nameToElement[r.name?.toLowerCase()];
+            const nameL = r.name?.toLowerCase();
+            const match = nameL && nameToElement[nameL];
             if (match && parseFloat(match.selected_by_percent) > 0) {
               totalManagers = Math.round(sel / (parseFloat(match.selected_by_percent) / 100));
               break;
