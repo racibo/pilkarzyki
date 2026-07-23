@@ -213,6 +213,7 @@ async function loadData() {
   showSection("rankings", "loading");
   try {
     bootstrapData = await cachedBootstrap();
+    applySeasonPrices(bootstrapData);
     updateSeasonBanner(bootstrapData);
     renderRankings();
     renderNaStart();
@@ -227,30 +228,22 @@ async function loadData() {
   }
 }
 
-const UNOFFICIAL_PRICES = [
+const SEASON_26_27_PRICES = [
   { name: "Haaland", now_cost: 155 },
   { name: "B.Fernandes", now_cost: 120 },
   { name: "Gabriel", now_cost: 80 },
 ];
 
-function applyUnofficialPrices(data) {
+function applySeasonPrices(data) {
   if (!data || !data.elements) return;
-  for (const override of UNOFFICIAL_PRICES) {
+  for (const override of SEASON_26_27_PRICES) {
     const player = data.elements.find(p => p.web_name === override.name || p.web_name?.includes(override.name));
     if (player && override.now_cost) player.now_cost = override.now_cost;
   }
 }
 
 function getOptimizedPlayers() {
-  const elements = bootstrapData.elements.map(p => ({ ...p }));
-  for (const override of UNOFFICIAL_PRICES) {
-    const player = elements.find(p => p.web_name === override.name || p.web_name?.includes(override.name));
-    if (player && override.now_cost) {
-      player.now_cost = override.now_cost;
-      player._unofficialPrice = true;
-    }
-  }
-  return elements;
+  return bootstrapData.elements;
 }
 
 // ===================== RANKINGS =====================
@@ -922,22 +915,19 @@ function renderOptimizer() {
 
   const budget = parseInt(document.getElementById("optimizer-budget").value);
   const remaining = ((budget - totalCost) / 10).toFixed(1);
-  const hasUnofficial = sorted.some(p => p._unofficialPrice);
 
   function makeJersey(p) {
     const color = TEAM_COLORS[p.team] || "#555";
     const dark = shadeColor(color, -30);
     const posShort = getPositionShort(p.element_type);
     const teamAbbr = getTeamName(p.team) || "";
-    const unofficial = p._unofficialPrice
-      ? `<span class="pitch-jersey-unofficial" title="${lang === "pl" ? "Cena nieoficjalna" : "Unofficial price"}">★</span>` : "";
     const locked = p._locked
       ? `<span class="pitch-jersey-locked" title="${lang === "pl" ? "Zawodnik na sztywno" : "Locked player"}">🔒</span>` : "";
     return `<div class="pitch-jersey">
       <div class="pitch-jersey-body" style="background:${color};box-shadow:inset 0 -10px 14px ${dark}, 0 2px 6px rgba(0,0,0,0.4)">
         <span style="position:relative;z-index:1;text-align:center;line-height:1.15;font-size:0.72rem;font-weight:800;padding:2px">${p.web_name}</span>
         <span class="pitch-jersey-badge">${teamAbbr}</span>
-        ${unofficial}${locked}
+        ${locked}
       </div>
       <div class="pitch-jersey-name">${p.web_name}</div>
       <div class="pitch-jersey-info">${(p.now_cost / 10).toFixed(1)}m · ${p.total_points} pkt</div>
@@ -974,14 +964,13 @@ function renderOptimizer() {
   tbody.innerHTML = sorted.map((p, i) => {
     const color = TEAM_COLORS[p.team] || "#555";
     const posClass = `pos-${getPositionShort(p.element_type).toLowerCase()}`;
-    const priceLabel = p._unofficialPrice ? `<span title="${lang === "pl" ? "Cena nieoficjalna" : "Unofficial price"}" style="color:#f59e0b;cursor:help">★</span> ` : "";
     const lockLabel = p._locked ? `<span title="${lang === "pl" ? "Zawodnik na sztywno" : "Locked player"}" style="font-size:0.75rem;margin-right:3px">🔒</span>` : "";
     return `<tr style="${p._locked ? 'background:rgba(37,99,235,0.08)' : ''}">
       <td class="rank-num">${i + 1}</td>
       <td>${lockLabel}${p.web_name}</td>
       <td><span class="team-color" style="background:${color}"></span>${getTeamName(p.team)}</td>
       <td><span class="pos-badge ${posClass}">${getPositionShort(p.element_type)}</span></td>
-      <td class="stat-val">${priceLabel}${(p.now_cost / 10).toFixed(1)}</td>
+      <td class="stat-val">${(p.now_cost / 10).toFixed(1)}</td>
       <td class="stat-val">${p.total_points}</td>
     </tr>`;
   }).join("");
@@ -1011,8 +1000,7 @@ function renderOptimizer() {
     <div class="optimizer-stat-box">
       <div class="optimizer-stat-val">${avgPts}</div>
       <div class="optimizer-stat-label">${lang === "pl" ? "Śr. pkt" : "Avg pts"}</div>
-    </div>
-    ${hasUnofficial ? `<div class="optimizer-unofficial-note">★ ${lang === "pl" ? "Cena nieoficjalna (nie potwierdzona przez FPL)" : "Unofficial price (not confirmed by FPL)"}</div>` : ""}`;
+    </div>`;
 
   initTableSort("optimizer-table", optimizerSort, renderOptimizer, ["web_name", "now_cost", "total_points"]);
 }
@@ -3576,9 +3564,6 @@ function addLockedPlayerRow() {
     const player = match;
     optimizerLockedIds.push(pid);
     costSpan.textContent = `${(player.now_cost / 10).toFixed(1)}m`;
-    if (player._unofficialPrice) {
-      costSpan.innerHTML += ` <span style="color:#f59e0b" title="Cena nieoficjalna">★</span>`;
-    }
     input.disabled = true;
     removeBtn.style.display = "";
     updateLockedInfo();
