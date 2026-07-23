@@ -14,11 +14,11 @@ let top15Tab = "points";
 let squadMap = null;
 
 const TEAM_COLORS = {
-  1: "#e30613", 2: "#0057a8", 3: "#ee2737", 4: "#6c1d45",
-  5: "#f0102c", 6: "#c8102e", 7: "#003090", 8: "#f78f1e",
-  9: "#e03a3e", 10: "#da291c", 11: "#132257", 12: "#ec1c24",
-  13: "#ee2523", 14: "#c8102e", 15: "#000000", 16: "#1b1d21",
-  17: "#7b2d26", 18: "#132257", 19: "#fdb913", 20: "#e4d28a",
+  1: "#e30613", 2: "#670e36", 3: "#da291c", 4: "#e30613",
+  5: "#0057b8", 6: "#034694", 7: "#6cb4ee", 8: "#c4122e",
+  9: "#003399", 10: "#cc0000", 11: "#f57f25", 12: "#3a64a3",
+  13: "#ffcd00", 14: "#c8102e", 15: "#6cabdd", 16: "#da291c",
+  17: "#241f20", 18: "#dd0000", 19: "#132257", 20: "#eb172b",
 };
 
 function getTeamName(id) {
@@ -33,7 +33,7 @@ function getPositionShort(type) {
 // ===================== LOCAL STORAGE CACHE =====================
 
 const LS_PREFIX = "fpl-cache";
-const LS_VERSION = 3;
+const LS_VERSION = 4;
 const LS_TTL = { bootstrap: 60 * 60 * 1000, element: 30 * 60 * 1000 };
 
 // Clear stale cache from older versions
