@@ -85,6 +85,7 @@
     <div class="page" id="page-ketchup">
       <h1 class="page-title" data-i18n="ketchup.title">Forma vs Oczekiwania</h1>
       <p class="page-desc" data-i18n="ketchup.description">Kto gra ponad/poniżej oczekiwań? Porównanie rzeczywistych punktów z oczekiwanymi (xG + xA) <span class="info-icon" data-i18n-text="ketchup.info">i</span></p>
+      <div style="background:var(--bg);border-radius:var(--radius);padding:8px 12px;margin-bottom:12px;font-size:0.78rem;color:var(--text-dim);border-left:3px solid var(--accent)">Dane z sezonu 25/26 (ostatni ukończony). Sezon 26/27 dopiero się rozpoczął.</div>
 
       <div id="ketchup-leaders" class="ketchup-leaders"></div>
 
@@ -192,6 +193,7 @@
     <div class="page" id="page-homeaway">
       <h1 class="page-title" data-i18n="homeAway.title">Dom / Wyjazd</h1>
       <p class="page-desc" data-i18n="homeAway.description">Porównanie punktów zdobywanych w meczach domowych i wyjazdowych <span class="info-icon" data-i18n-text="homeAway.info">i</span></p>
+      <div style="background:var(--bg);border-radius:var(--radius);padding:8px 12px;margin-bottom:12px;font-size:0.78rem;color:var(--text-dim);border-left:3px solid var(--accent)">Dane z element-summary API — obejmują bieżący sezon 26/27 oraz ostatnie ukończone sezony.</div>
 
       <div id="homeaway-leaders" class="homeaway-leaders"></div>
 
@@ -237,6 +239,7 @@
     <div class="page" id="page-squadbuilder">
       <h1 class="page-title" data-i18n="squadBuilder.title">Buduj skład</h1>
       <p class="page-desc" data-i18n="squadBuilder.description">Ważony optymalizator — ustaw wagi czynników by stworzyć idealny skład <span class="info-icon" data-i18n-text="squadBuilder.info">i</span></p>
+      <div style="background:var(--bg);border-radius:var(--radius);padding:8px 12px;margin-bottom:12px;font-size:0.78rem;color:var(--text-dim);border-left:3px solid var(--accent)">Dane z sezonu 26/27 (bieżący). Sezon dopiero się rozpoczął — dane o formie i xP mogą być niepełne.</div>
 
       <div class="card" id="squadbuilder-controls">
         <div class="form-row">
@@ -335,7 +338,7 @@
         <div class="form-row">
           <div class="form-group">
             <label data-i18n="myTeam.managerId">ID menedżera</label>
-            <input type="number" id="myteam-id" placeholder="np. 12345">
+            <input type="number" id="myteam-id" placeholder="np. 12345" value="76582">
           </div>
           <div class="form-group">
             <label data-i18n="common.lastGWs">Ostatnie X kolejek</label>
@@ -398,7 +401,7 @@
         <div class="form-row">
           <div class="form-group">
             <label data-i18n="leader.leagueId">ID ligi</label>
-            <input type="number" id="leader-id" placeholder="np. 12345">
+            <input type="number" id="leader-id" placeholder="np. 12345" value="0">
           </div>
           <button class="btn" id="leader-run" data-i18n="leader.load">Pobierz tabelę</button>
         </div>
@@ -417,6 +420,7 @@
     <div class="page" id="page-nastart">
       <h1 class="page-title" data-i18n="naStart.title">Na start</h1>
       <p class="page-desc" data-i18n="naStart.description">Ceny vs punkty w sezonie 25/26 — kto jest najlepszą wartością? (pkt za milion ceny) <span class="info-icon" data-i18n-text="naStart.info">i</span></p>
+      <div style="background:var(--bg);border-radius:var(--radius);padding:8px 12px;margin-bottom:12px;font-size:0.78rem;color:var(--text-dim);border-left:3px solid var(--accent)">Punkty z sezonu 25/26 (ostatni ukończony). Ceny z sezonu 26/27 (bieżący).</div>
 
       <div class="na-start-legend">
         <span class="legend-item"><span class="legend-badge price-note" data-i18n="naStart.priceNote">Cena 25/26</span></span>
@@ -458,8 +462,9 @@
           <div class="form-group">
             <label data-i18n="priceHistory.season">Sezon</label>
             <select id="pricehistory-season">
-              <option value="current" data-i18n="priceHistory.currentSeason">Bieżący (25/26)</option>
+              <option value="current" data-i18n="priceHistory.currentSeason">Bieżący (26/27)</option>
               <option value="all" data-i18n="priceHistory.allSeasons">Wszystkie sezony</option>
+              <option value="2025-26">25/26</option>
               <option value="2024-25">24/25</option>
               <option value="2023-24">23/24</option>
               <option value="2022-23">22/23</option>
@@ -489,9 +494,19 @@
     <div class="page" id="page-top15">
       <h1 class="page-title" data-i18n="top15.title">Top 15 kolejki</h1>
       <p class="page-desc" data-i18n="top15.description">Top 15 zawodników wg punktów i posiadania — jak zmieniają się kolejkę po kolejce <span class="info-icon" data-i18n-text="top15.info">i</span></p>
+      <div style="background:var(--bg);border-radius:var(--radius);padding:8px 12px;margin-bottom:12px;font-size:0.78rem;color:var(--text-dim);border-left:3px solid var(--accent)">Dane z vaastav CSV. Dla bieżącego sezonu (26/27) dane mogą być niedostępne — wybierz sezon 25/26.</div>
 
       <div class="card" id="top15-controls">
         <div class="form-row">
+          <div class="form-group">
+            <label data-i18n="common.season">Sezon</label>
+            <select id="top15-season">
+              <option value="2025-26">25/26</option>
+              <option value="2024-25">24/25</option>
+              <option value="2023-24">23/24</option>
+              <option value="2022-23">22/23</option>
+            </select>
+          </div>
           <div class="form-group">
             <label data-i18n="top15.gwRange">Zakres kolejk</label>
             <select id="top15-gw-start"></select>

@@ -822,7 +822,7 @@ td {
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: 78px;
+  width: 86px;
   cursor: default;
   transition: transform 0.15s;
 }
@@ -833,8 +833,8 @@ td {
 
 .pitch-jersey-body {
   position: relative;
-  width: 56px;
-  height: 62px;
+  width: 62px;
+  height: 68px;
   border-radius: 8px 8px 3px 3px;
   display: flex;
   align-items: center;
@@ -850,18 +850,18 @@ td {
   content: "";
   position: absolute;
   top: 2px;
-  width: 10px;
-  height: 16px;
+  width: 12px;
+  height: 18px;
   border-radius: 0 0 4px 4px;
 }
 
 .pitch-jersey-body::before {
-  left: -8px;
+  left: -10px;
   border-radius: 0 0 0 6px;
 }
 
 .pitch-jersey-body::after {
-  right: -8px;
+  right: -10px;
   border-radius: 0 0 6px 0;
 }
 
@@ -869,7 +869,7 @@ td {
   position: absolute;
   bottom: 2px;
   right: 2px;
-  font-size: 0.45rem;
+  font-size: 0.5rem;
   font-weight: 800;
   color: rgba(255,255,255,0.7);
   background: rgba(0,0,0,0.3);
@@ -881,12 +881,12 @@ td {
 
 .pitch-jersey-name {
   margin-top: 4px;
-  font-size: 0.62rem;
+  font-size: 0.68rem;
   font-weight: 700;
   color: #ddd;
   text-align: center;
   line-height: 1.1;
-  max-width: 78px;
+  max-width: 86px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -894,7 +894,7 @@ td {
 }
 
 .pitch-jersey-info {
-  font-size: 0.52rem;
+  font-size: 0.58rem;
   color: rgba(255,255,255,0.6);
   text-align: center;
   text-shadow: 0 1px 3px rgba(0,0,0,0.7);
