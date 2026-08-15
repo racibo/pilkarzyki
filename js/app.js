@@ -170,7 +170,8 @@ function compressBootstrap(data) {
     teams: data.teams,
     element_types: data.element_types,
     elements: data.elements.map((p) => ({
-      id: p.id, web_name: p.web_name, team: p.team, element_type: p.element_type,
+      id: p.id, web_name: p.web_name, first_name: p.first_name, second_name: p.second_name,
+      team: p.team, element_type: p.element_type,
       total_points: p.total_points, now_cost: p.now_cost, minutes: p.minutes,
       goals_scored: p.goals_scored, assists: p.assists, clean_sheets: p.clean_sheets,
       form: p.form, ict_index: p.ict_index, selected_by_percent: p.selected_by_percent,
@@ -850,13 +851,10 @@ function findVaastavRow(csv, player) {
 
 async function getKetchupArchivedHistory(season, playerId, startGW, maxGW) {
   const player = bootstrapData.elements.find((p) => p.id === playerId);
-  console.log("[KetchupHist] season=", season, "playerId=", playerId, "playerFound=", !!player, "startGW=", startGW, "maxGW=", maxGW);
   if (!player) return [];
   const gws = [];
   for (let gw = startGW; gw <= maxGW; gw++) gws.push(gw);
   const fetched = await fetchGWBatch(season, gws);
-  const nonEmpty = gws.filter((gw) => (fetched[gw] || []).length > 0).length;
-  console.log("[KetchupHist] gwsRequested=", gws.length, "nonEmpty=", nonEmpty);
   const rows = [];
   for (const gw of gws) {
     const csv = fetched[gw] || [];
@@ -871,7 +869,6 @@ async function getKetchupArchivedHistory(season, playerId, startGW, maxGW) {
       assists: parseInt(match.assists) || 0,
     });
   }
-  console.log("[KetchupHist] rows=", rows.length, "name=", player.first_name, player.second_name);
   return rows.sort((a, b) => a.round - b.round);
 }
 
