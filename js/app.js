@@ -4674,24 +4674,96 @@ function renderArchiveTopPerformers(rows, teamMap, lang) {
 
 // ===================== NAV =====================
 
+const NAV_CONFIG = [
+  { page: "rankings", key: "nav.rankings" },
+  { page: "ketchup", key: "nav.ketchup" },
+  { page: "optimizer", key: "nav.optimizer" },
+  { page: "homeaway", key: "nav.homeAway" },
+  { page: "squadbuilder", key: "nav.squadBuilder" },
+  { page: "myteam", key: "nav.myTeam" },
+  { page: "leader", key: "nav.leader" },
+  { page: "nastart", key: "nav.naStart" },
+  { page: "pricehistory", key: "nav.priceHistory" },
+  { page: "top15", key: "nav.top15" },
+  { page: "archive", key: "nav.archive" },
+  { page: "stadiums", key: "nav.stadiums" },
+  { page: "h2h", key: "nav.h2h" },
+];
+const NAV_FAV_KEY = "fpl_nav_fav";
+let currentPage = "rankings";
+
+function getNavFav() {
+  const v = localStorage.getItem(NAV_FAV_KEY);
+  return NAV_CONFIG.some(c => c.page === v) ? v : null;
+}
+function buildNav() {
+  const nav = document.getElementById("nav");
+  if (!nav) return;
+  const lang = getLang();
+  const items = NAV_CONFIG.slice().sort((a, b) => t(a.key).localeCompare(t(b.key), lang));
+  const fav = getNavFav();
+  nav.innerHTML = "";
+  items.forEach(c => {
+    const div = document.createElement("div");
+    div.className = "nav-item" + (c.page === currentPage ? " active" : "");
+    div.dataset.page = c.page;
+    div.innerHTML = `<span class="nav-label">${t(c.key)}</span><span class="nav-star${c.page === fav ? " fav" : ""}" title="Ustaw jako ulubioną stronę">${c.page === fav ? "★" : "☆"}</span>`;
+    nav.appendChild(div);
+  });
+}
+function openInitialPage() {
+  const h = location.hash || "";
+  if (h.indexOf("myteam=") >= 0) {
+    const nav = document.querySelector('.nav-item[data-page="myteam"]');
+    if (nav) { nav.click(); return; }
+  }
+  const page = h.replace(/^#/, "");
+  if (page && NAV_CONFIG.some(c => c.page === page)) {
+    const nav = document.querySelector(`.nav-item[data-page="${page}"]`);
+    if (nav) { nav.click(); return; }
+  }
+  const fav = getNavFav();
+  if (fav) {
+    const nav = document.querySelector(`.nav-item[data-page="${fav}"]`);
+    if (nav) { nav.click(); return; }
+  }
+  const first = document.querySelector("#nav .nav-item");
+  if (first) first.click();
+}
+
 function initNav() {
+  buildNav();
   const nav = document.getElementById("nav");
   nav.addEventListener("click", (e) => {
+    const star = e.target.closest(".nav-star");
+    if (star) {
+      const item = star.closest(".nav-item");
+      if (item) {
+        const page = item.dataset.page;
+        if (getNavFav() === page) localStorage.removeItem(NAV_FAV_KEY);
+        else localStorage.setItem(NAV_FAV_KEY, page);
+        buildNav();
+      }
+      return;
+    }
     const item = e.target.closest(".nav-item");
     if (!item) return;
+    const page = item.dataset.page;
+    currentPage = page;
     nav.querySelectorAll(".nav-item").forEach((n) => n.classList.remove("active"));
     item.classList.add("active");
     document.querySelectorAll(".page").forEach((p) => p.classList.remove("active"));
-    const page = document.getElementById(`page-${item.dataset.page}`);
-    if (page) page.classList.add("active");
-    if (item.dataset.page === "stadiums" && bootstrapData) {
+    const pg = document.getElementById(`page-${page}`);
+    if (pg) pg.classList.add("active");
+    try { history.replaceState(null, "", "#" + page); } catch (err) {}
+    if (page === "stadiums" && bootstrapData) {
       setTimeout(() => renderStadiums(), 50);
     }
-    if (item.dataset.page === "archive") {
+    if (page === "archive") {
       if (!archiveState.loaded) loadArchiveSeason().then(renderArchive);
       else renderArchive();
     }
-    if (item.dataset.page === "myteam") {
+    if (page === "myteam") {
       const tabs = document.getElementById("myteam-tabs");
       if (tabs) tabs.style.display = "";
       const initial = myTeamTabFromHash() || getMyTeamFav() || "overview";
@@ -4707,6 +4779,7 @@ function initLang() {
     setLang(getLang() === "pl" ? "en" : "pl");
     btn.textContent = getLang() === "pl" ? "EN" : "PL";
     applyTranslations();
+    buildNav();
     if (bootstrapData) {
       updateSeasonBanner(bootstrapData);
       renderRankings();
@@ -5977,14 +6050,22 @@ document.addEventListener("DOMContentLoaded", () => {
   loadAllFixtures();
 
   window.addEventListener("hashchange", () => {
-    const t = myTeamTabFromHash();
-    if (t && document.getElementById("page-myteam") && document.getElementById("page-myteam").classList.contains("active")) {
-      activateMyTeamTab(t);
+    const mt = myTeamTabFromHash();
+    if (mt) {
+      if (document.getElementById("page-myteam") && document.getElementById("page-myteam").classList.contains("active")) {
+        activateMyTeamTab(mt);
+      } else {
+        const nav = document.querySelector('.nav-item[data-page="myteam"]');
+        if (nav) nav.click();
+      }
+      return;
+    }
+    const page = (location.hash || "").replace(/^#/, "");
+    if (page && NAV_CONFIG.some(c => c.page === page)) {
+      const nav = document.querySelector(`.nav-item[data-page="${page}"]`);
+      if (nav) nav.click();
     }
   });
 
-  if (myTeamTabFromHash()) {
-    const nav = document.querySelector('.nav-item[data-page="myteam"]');
-    if (nav) nav.click();
-  }
+  openInitialPage();
 });
