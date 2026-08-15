@@ -1766,10 +1766,10 @@ async function runMyTeam(override) {
   try {
     const allGWs = bootstrapData.events || [];
     const finishedGWs = allGWs.filter(e => e.finished);
-    const maxGW = finishedGWs.length > 0 ? finishedGWs[finishedGWs.length - 1].id : 38;
+    const maxGW = finishedGWs.length > 0 ? finishedGWs[finishedGWs.length - 1].id : 0;
     const startGW = gwFilter > 0 ? Math.max(1, maxGW - gwFilter + 1) : 1;
 
-    let gwPicksData, playerGwMap, gws;
+    let gwPicksData = {}, playerGwMap, gws;
     let totalManagerPoints = 0;
 
     if (override) {
