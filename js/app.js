@@ -850,10 +850,13 @@ function findVaastavRow(csv, player) {
 
 async function getKetchupArchivedHistory(season, playerId, startGW, maxGW) {
   const player = bootstrapData.elements.find((p) => p.id === playerId);
+  console.log("[KetchupHist] season=", season, "playerId=", playerId, "playerFound=", !!player, "startGW=", startGW, "maxGW=", maxGW);
   if (!player) return [];
   const gws = [];
   for (let gw = startGW; gw <= maxGW; gw++) gws.push(gw);
   const fetched = await fetchGWBatch(season, gws);
+  const nonEmpty = gws.filter((gw) => (fetched[gw] || []).length > 0).length;
+  console.log("[KetchupHist] gwsRequested=", gws.length, "nonEmpty=", nonEmpty);
   const rows = [];
   for (const gw of gws) {
     const csv = fetched[gw] || [];
@@ -868,6 +871,7 @@ async function getKetchupArchivedHistory(season, playerId, startGW, maxGW) {
       assists: parseInt(match.assists) || 0,
     });
   }
+  console.log("[KetchupHist] rows=", rows.length, "name=", player.first_name, player.second_name);
   return rows.sort((a, b) => a.round - b.round);
 }
 
