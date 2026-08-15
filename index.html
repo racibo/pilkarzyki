@@ -46,7 +46,9 @@
     <div class="nav-item" data-page="nastart" data-i18n="nav.naStart">Na start</div>
     <div class="nav-item" data-page="pricehistory" data-i18n="nav.priceHistory">Historia ceny</div>
     <div class="nav-item" data-page="top15" data-i18n="nav.top15">Top 15 kolejki</div>
+    <div class="nav-item" data-page="archive" data-i18n="nav.archive">Archiwum sezonu</div>
     <div class="nav-item" data-page="stadiums" data-i18n="nav.stadiums">Stadiony</div>
+    <div class="nav-item" data-page="h2h" data-i18n="nav.h2h">Liga H2H</div>
   </nav>
 
   <main class="main">
@@ -106,6 +108,21 @@
               <option value="38">Wszystkie</option>
             </select>
           </div>
+          <div class="form-group">
+            <label data-i18n="priceHistory.season">Sezon</label>
+            <select id="ketchup-season">
+              <optgroup label="Bieżąca rozgrywka" data-i18n="priceHistory.currentGroup">
+                <option value="current" data-i18n="priceHistory.currentSeason">Bieżący sezon</option>
+              </optgroup>
+              <optgroup label="Dane archiwalne" data-i18n="priceHistory.archiveGroup">
+                <option value="2025-26" selected>25/26</option>
+                <option value="2024-25">24/25</option>
+                <option value="2023-24">23/24</option>
+                <option value="2022-23">22/23</option>
+                <option value="2021-22">21/22</option>
+              </optgroup>
+            </select>
+          </div>
         </div>
       </div>
       <div class="card">
@@ -156,8 +173,9 @@
             <button class="tab active" data-optview="pitch" data-i18n="optimizer.viewPitch">Boisko</button>
             <button class="tab" data-optview="table" data-i18n="optimizer.viewTable">Tabela</button>
           </div>
-          <div id="optimizer-pitch"></div>
-          <div id="optimizer-pitch-table" style="display:none">
+      <div id="optimizer-pitch"></div>
+      <div id="optimizer-fixtures"></div>
+      <div id="optimizer-pitch-table" style="display:none">
             <table id="optimizer-table">
               <thead>
                 <tr>
@@ -167,6 +185,10 @@
                   <th data-i18n="ketchup.position">Poz</th>
                   <th data-sort="now_cost" data-i18n="ketchup.price">Cena</th>
                   <th data-sort="total_points" data-i18n="ketchup.totalPts">Pkt</th>
+                  <th data-i18n="squadBuilder.epNext">exp pkt</th>
+                  <th data-i18n="squadBuilder.chance">Szansa</th>
+                  <th data-i18n="squadBuilder.xgi">xGI</th>
+                  <th data-i18n="squadBuilder.fdr">FDR</th>
                 </tr>
               </thead>
               <tbody id="optimizer-body"></tbody>
@@ -239,13 +261,28 @@
     <div class="page" id="page-squadbuilder">
       <h1 class="page-title" data-i18n="squadBuilder.title">Buduj skład</h1>
       <p class="page-desc" data-i18n="squadBuilder.description">Ważony optymalizator — ustaw wagi czynników by stworzyć idealny skład <span class="info-icon" data-i18n-text="squadBuilder.info">i</span></p>
-      <div style="background:var(--bg);border-radius:var(--radius);padding:8px 12px;margin-bottom:12px;font-size:0.78rem;color:var(--text-dim);border-left:3px solid var(--accent)">Dane z sezonu 26/27 (bieżący). Sezon dopiero się rozpoczął — dane o formie i xP mogą być niepełne.</div>
+      <div style="background:var(--bg);border-radius:var(--radius);padding:8px 12px;margin-bottom:12px;font-size:0.78rem;color:var(--text-dim);border-left:3px solid var(--accent)">Dane z sezonu 26/27 (bieżący). Dane o formie i xP mogą być niepełne. Terminarz i FDR z FPL API.</div>
 
       <div class="card" id="squadbuilder-controls">
-        <div class="form-row">
+        <div class="form-row" style="flex-wrap:wrap;gap:10px">
           <div class="form-group">
             <label data-i18n="squadBuilder.gameweek">Kolejka docelowa</label>
             <select id="squadbuilder-gw"></select>
+          </div>
+          <div class="form-group">
+            <label>Następne kolejki</label>
+            <div class="fdr-count-selector">
+              <button class="fdr-count-btn" data-fdrcount="3">3</button>
+              <button class="fdr-count-btn active" data-fdrcount="5">5</button>
+              <button class="fdr-count-btn" data-fdrcount="8">8</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label data-i18n="squadBuilder.budget">Budżet (mln £)</label>
+            <div class="budget-slider-row">
+              <input type="range" id="squadbuilder-budget-slider" min="95" max="105" step="1" value="100">
+              <span class="budget-val" id="squadbuilder-budget-val">100.0m</span>
+            </div>
           </div>
         </div>
         <div class="form-explanation" id="squadbuilder-form-explanation" style="display:none"></div>
@@ -256,9 +293,19 @@
             <span class="weight-val">50</span>
           </div>
           <div class="weight-row">
-            <label data-i18n="squadBuilder.weightFixture">Trudność terminarza</label>
-            <input type="range" class="weight-slider" data-weight="fixture" min="0" max="100" value="30">
-            <span class="weight-val">30</span>
+            <label data-i18n="squadBuilder.weightFixture">Trudność terminarza (N kolejek)</label>
+            <input type="range" class="weight-slider" data-weight="fixture" min="0" max="100" value="40">
+            <span class="weight-val">40</span>
+          </div>
+          <div class="weight-row">
+            <label data-i18n="squadBuilder.epNext">Oczekiwane pkt (ep_next)</label>
+            <input type="range" class="weight-slider" data-weight="epnext" min="0" max="100" value="50">
+            <span class="weight-val">50</span>
+          </div>
+          <div class="weight-row">
+            <label data-i18n="squadBuilder.chance">Szansa gry</label>
+            <input type="range" class="weight-slider" data-weight="chance" min="0" max="100" value="70">
+            <span class="weight-val">70</span>
           </div>
           <div class="weight-row">
             <label data-i18n="squadBuilder.weightHomeAway">Dom / Wyjazd</label>
@@ -302,12 +349,17 @@
               <th data-i18n="ketchup.position">Poz</th>
               <th data-sort="now_cost" data-i18n="ketchup.price">Cena</th>
               <th data-sort="total_points" data-i18n="ketchup.totalPts">Pkt</th>
+              <th data-sort="epNext">ep_next</th>
+              <th data-sort="chanceNext">Szansa</th>
+              <th data-sort="xgi">xGI</th>
+              <th data-sort="avgFDR">FDR</th>
               <th data-sort="avgAwayDist" data-i18n="squadBuilder.avgDist">Śr. dystans</th>
               <th data-sort="compositeScore" data-i18n="squadBuilder.score">Wynik</th>
             </tr>
           </thead>
           <tbody id="squadbuilder-body"></tbody>
         </table>
+        <div id="squadbuilder-budget" class="squadbuilder-budget" style="display:none"></div>
         <div id="squadbuilder-charts" style="display:none">
           <div class="charts-row">
             <div class="chart-box">
@@ -351,6 +403,21 @@
           </div>
           <button class="btn" id="myteam-run" data-i18n="myTeam.load">Pobierz skład</button>
         </div>
+      </div>
+
+      <div class="card" id="myteam-csv-card">
+        <details>
+          <summary>📥 Importuj z CSV (archiwum menedżera)</summary>
+          <p class="csv-hint">Wklej CSV wyeksportowany z FPL (zakładka Historia → Pobierz) lub wgraj plik.
+            Oczekiwane nagłówki: <code>round, position, points, web_name, team</code> (opcjonalnie: <code>captain, vice_captain, field_position</code>).
+            Oficjalne API FPL nie udostępnia archiwalnego składu menedżera, więc ten import to jedyne źródło.</p>
+          <textarea id="myteam-csv-input" placeholder="round,position,points,web_name,team&#10;1,1,8,8,Kevin De Bruyne,MCI&#10;1,2,6,6,Erling Haaland,MCI&#10;..."></textarea>
+          <div class="form-row csv-row">
+            <input type="file" id="myteam-csv-file" accept=".csv,text/csv">
+            <label class="csv-check"><input type="checkbox" id="myteam-csv-doubled"> Punkty kapitana już podwojone (×2)</label>
+            <button class="btn" id="myteam-csv-run">Wczytaj z CSV</button>
+          </div>
+        </details>
       </div>
 
       <div id="myteam-summary-cards" style="display:none">
@@ -462,13 +529,17 @@
           <div class="form-group">
             <label data-i18n="priceHistory.season">Sezon</label>
             <select id="pricehistory-season">
-              <option value="current" data-i18n="priceHistory.currentSeason">Bieżący (26/27)</option>
-              <option value="all" data-i18n="priceHistory.allSeasons">Wszystkie sezony</option>
-              <option value="2025-26">25/26</option>
-              <option value="2024-25">24/25</option>
-              <option value="2023-24">23/24</option>
-              <option value="2022-23">22/23</option>
-              <option value="2021-22">21/22</option>
+              <optgroup label="Bieżąca rozgrywka" data-i18n="priceHistory.currentGroup">
+                <option value="current" data-i18n="priceHistory.currentSeason">Bieżący sezon</option>
+                <option value="all" data-i18n="priceHistory.allSeasons">Wszystkie sezony</option>
+              </optgroup>
+              <optgroup label="Dane archiwalne" data-i18n="priceHistory.archiveGroup">
+                <option value="2025-26" selected>25/26</option>
+                <option value="2024-25">24/25</option>
+                <option value="2023-24">23/24</option>
+                <option value="2022-23">22/23</option>
+                <option value="2021-22">21/22</option>
+              </optgroup>
             </select>
           </div>
         </div>
@@ -520,6 +591,7 @@
       <div class="tabs" id="top15-tabs">
         <button class="tab active" data-tab="points" data-i18n="top15.tabPoints">Punkty</button>
         <button class="tab" data-tab="ownership" data-i18n="top15.tabOwnership">Posiadanie</button>
+        <button class="tab" data-tab="differentials" data-i18n="top15.tabDifferentials">Różnice</button>
       </div>
 
       <div class="card">
@@ -543,6 +615,40 @@
           </thead>
           <tbody id="top15-body"></tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- ARCHIVE -->
+    <div class="page" id="page-archive">
+      <h1 class="page-title" data-i18n="archive.title">Archiwum sezonu</h1>
+      <p class="page-desc" data-i18n="archive.description">Przeglądaj wyniki meczów, tabelę i najlepszych punktujących każdej kolejki wybranego sezonu <span class="info-icon" data-i18n-text="archive.info">i</span></p>
+
+      <div class="card" id="archive-controls">
+        <div class="form-row">
+          <div class="form-group">
+            <label data-i18n="common.season">Sezon</label>
+            <select id="archive-season"></select>
+          </div>
+          <div class="form-group">
+            <label data-i18n="common.gameweek">Kolejka</label>
+            <select id="archive-gw"></select>
+          </div>
+          <button class="btn" id="archive-run" data-i18n="optimizer.calculate">Pokaż</button>
+        </div>
+      </div>
+
+      <div id="archive-loading" class="loading" style="display:none"><div class="spinner"></div><div data-i18n="common.loading">Ładowanie danych...</div></div>
+      <div id="archive-placeholder" class="placeholder">
+        <div class="placeholder-icon">🗂️</div>
+        <div data-i18n="archive.placeholder">Wybierz sezon i kolejkę, by zobaczyć archiwalne dane.</div>
+      </div>
+
+      <div id="archive-results" style="display:none">
+        <div class="charts-row">
+          <div class="card" id="archive-fixtures"></div>
+          <div class="card" id="archive-standings"></div>
+        </div>
+        <div class="card" id="archive-top"></div>
       </div>
     </div>
 
@@ -576,6 +682,210 @@
         </div>
         <div id="stadiums-regions-tab" style="display:none"></div>
         <div id="stadiums-distances-tab" style="display:none"></div>
+      </div>
+    </div>
+
+    <div class="page" id="page-h2h">
+      <h1 class="page-title" data-i18n="h2h.title">Liga H2H</h1>
+      <p class="page-desc" data-i18n="h2h.description">Head-to-head — każdy z każdym, porównanie punktów w danej kolejce</p>
+
+      <div class="card" id="h2h-controls">
+        <div class="form-row">
+          <div class="form-group" style="flex:2">
+            <label data-i18n="h2h.leagueId">ID ligi H2H</label>
+            <input type="text" id="h2h-id" placeholder="np. 12345" inputmode="numeric">
+          </div>
+          <button class="btn" id="h2h-run" data-i18n="h2h.load">Pobierz</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div id="h2h-loading" class="loading" style="display:none"><div class="spinner"></div><div data-i18n="common.loading">Ładowanie danych...</div></div>
+        <div id="h2h-placeholder" class="placeholder">
+          <div class="placeholder-icon">⚔️</div>
+          <div data-i18n="h2h.placeholder">Wpisz ID ligi H2H i kliknij 'Pobierz'</div>
+        </div>
+
+        <div id="h2h-table" style="display:none">
+          <div class="tabs" id="h2h-tabs" style="margin-bottom:0;border-bottom:1px solid var(--border)">
+            <button class="tab active" data-tab="standings" data-i18n="h2h.tabStandings">Tabela</button>
+            <button class="tab" data-tab="expected" data-i18n="h2h.tabExpected">Oczekiwana</button>
+            <button class="tab" data-tab="form" data-i18n="h2h.tabForm">Forma</button>
+            <button class="tab" data-tab="charts" data-i18n="h2h.tabCharts">Wykresy</button>
+            <button class="tab" data-tab="luck" data-i18n="h2h.tabLuck">Szczęście</button>
+            <button class="tab" data-tab="upsets" data-i18n="h2h.tabUpsets">Niespodzianki</button>
+            <button class="tab" data-tab="matchday" data-i18n="h2h.tabMatchday">Mecz kolejki</button>
+            <button class="tab" data-tab="headtohead" data-i18n="h2h.tabH2H">Rewanże</button>
+            <button class="tab" data-tab="fixtures" data-i18n="h2h.tabFixtures">Terminarz</button>
+            <button class="tab" data-tab="live" data-i18n="h2h.tabLive">Live</button>
+            <button class="tab" data-tab="captains" data-i18n="h2h.tabCaptains">Kapitanowie</button>
+            <button class="tab" data-tab="variance" data-i18n="h2h.tabVariance">Zmienność</button>
+            <button class="tab" data-tab="streaks" data-i18n="h2h.tabStreaks">Serie</button>
+          </div>
+
+          <!-- STANDINGS TAB -->
+          <div id="h2h-standings-tab">
+            <div id="h2h-standings-summary" style="display:flex;flex-wrap:wrap;gap:12px;padding:16px"></div>
+            <div style="overflow-x:auto">
+              <table id="h2h-standings-table">
+                <thead><tr>
+                  <th>#</th>
+                  <th data-i18n="ketchup.webName">Zawodnik</th>
+                  <th data-i18n="h2h.mp">M</th>
+                  <th data-i18n="h2h.wins">W</th>
+                  <th data-i18n="h2h.draws">R</th>
+                  <th data-i18n="h2h.losses">P</th>
+                  <th data-i18n="h2h.ptsFor">Pkt+</th>
+                  <th data-i18n="h2h.ptsAgainst">Pkt−</th>
+                  <th data-i18n="h2h.diff">Bilans</th>
+                  <th data-i18n="h2h.leaguePts">Pkt ligowe</th>
+                </tr></thead>
+                <tbody id="h2h-standings-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- EXPECTED TABLE TAB -->
+          <div id="h2h-expected-tab" style="display:none">
+            <div style="padding:12px 16px;color:var(--text-dim);font-size:0.85rem" data-i18n="h2h.expectedDesc">Ranking wg sumy zdobytych punktów FPL, niezależnie od wyników meczów H2H</div>
+            <div style="overflow-x:auto">
+              <table>
+                <thead><tr>
+                  <th>#</th>
+                  <th data-i18n="ketchup.webName">Zawodnik</th>
+                  <th data-i18n="h2h.totalFPLPts">Suma pkt FPL</th>
+                  <th data-i18n="h2h.avgFPLPts">Śr. pkt/kolejkę</th>
+                  <th data-i18n="h2h.bestGW">Najl. GW</th>
+                  <th data-i18n="h2h.worstGW">Najg. GW</th>
+                  <th data-i18n="h2h.leagueRankDiff">Różnica vs liga</th>
+                </tr></thead>
+                <tbody id="h2h-expected-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- FORM TAB -->
+          <div id="h2h-form-tab" style="display:none">
+            <div style="padding:12px 16px;color:var(--text-dim);font-size:0.85rem" data-i18n="h2h.formDesc">Ostatnie 5 meczów jako ciąg W/R/P</div>
+            <div id="h2h-form-cards" style="padding:12px 16px;display:flex;flex-wrap:wrap;gap:12px"></div>
+          </div>
+
+          <!-- CHARTS TAB -->
+          <div id="h2h-charts-tab" style="display:none">
+            <div class="charts-row">
+              <div class="chart-box">
+                <h3 class="chart-title" data-i18n="h2h.cumulativeTitle">Narastanie punktów ligowych</h3>
+                <div id="h2h-chart-cumulative"></div>
+              </div>
+              <div class="chart-box">
+                <h3 class="chart-title" data-i18n="h2h.advantageTitle">Przewaga w wygranych meczach</h3>
+                <div id="h2h-chart-advantage"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- LUCK TAB -->
+          <div id="h2h-luck-tab" style="display:none">
+            <div style="padding:12px 16px;color:var(--text-dim);font-size:0.85rem" data-i18n="h2h.luckDesc">Kto wygrywa najmniejszą różnicą punktów?</div>
+            <div style="overflow-x:auto">
+              <table>
+                <thead><tr>
+                  <th>#</th>
+                  <th data-i18n="ketchup.webName">Zawodnik</th>
+                  <th data-i18n="h2h.wins">Wygrane</th>
+                  <th data-i18n="h2h.avgWinMargin">Śr. margines wygranej</th>
+                  <th data-i18n="h2h.closestWin">Najbliższa wygrana</th>
+                  <th data-i18n="h2h.luckScore">Wsp. szczęścia</th>
+                </tr></thead>
+                <tbody id="h2h-luck-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- UPSETS TAB -->
+          <div id="h2h-upsets-tab" style="display:none">
+            <div style="padding:12px 16px;color:var(--text-dim);font-size:0.85rem" data-i18n="h2h.upsetsDesc">Mecze, w których słabszy wg sumy sezonowej pokonał silniejszego</div>
+            <div style="overflow-x:auto">
+              <table>
+                <thead><tr>
+                  <th>GW</th>
+                  <th data-i18n="h2h.winner">Wygrany</th>
+                  <th data-i18n="h2h.loser">Przegrany</th>
+                  <th data-i18n="h2h.score">Wynik</th>
+                  <th data-i18n="h2h.upsetSize">Skala niespodzianki</th>
+                </tr></thead>
+                <tbody id="h2h-upsets-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- MATCH OF THE GW TAB -->
+          <div id="h2h-matchday-tab" style="display:none">
+            <div style="padding:12px 16px;color:var(--text-dim);font-size:0.85rem" data-i18n="h2h.matchdayDesc">Starcie z największą łączną liczbą punktów w danej kolejce</div>
+            <div id="h2h-matchday-cards" style="padding:12px 16px"></div>
+          </div>
+
+          <!-- HEAD-TO-HEAD HISTORY TAB -->
+          <div id="h2h-headtohead-tab" style="display:none">
+            <div style="padding:12px 16px;color:var(--text-dim);font-size:0.85rem" data-i18n="h2h.h2hDesc">Bilans wzajemnych spotkań dla par, które grały ze sobą więcej niż raz</div>
+            <div id="h2h-headtohead-content" style="padding:12px 16px"></div>
+          </div>
+
+          <!-- FIXTURES TAB -->
+          <div id="h2h-fixtures-tab" style="display:none">
+            <div style="padding:12px 16px;color:var(--text-dim);font-size:0.85rem" data-i18n="h2h.fixturesDesc">Terminarz meczów H2H na nadchodzące kolejki</div>
+            <div id="h2h-fixtures-content" style="padding:12px 16px"></div>
+          </div>
+
+          <!-- LIVE TAB -->
+          <div id="h2h-live-tab" style="display:none">
+            <div style="padding:12px 16px;color:var(--text-dim);font-size:0.85rem" data-i18n="h2h.liveDesc">Podgląd trwającej kolejki — kto prowadzi w swoim meczu</div>
+            <div id="h2h-live-content" style="padding:12px 16px"></div>
+          </div>
+
+          <!-- CAPTAINS TAB -->
+          <div id="h2h-captains-tab" style="display:none">
+            <div style="padding:12px 16px;color:var(--text-dim);font-size:0.85rem" data-i18n="h2h.captainsDesc">Pojedynek kapitanów w ramach każdego meczu H2H</div>
+            <div style="overflow-x:auto">
+              <table>
+                <thead><tr>
+                  <th>GW</th>
+                  <th data-i18n="h2h.matchup">Starcie</th>
+                  <th data-i18n="h2h.captainA">Kapitan A</th>
+                  <th data-i18n="h2h.captainAPts">Pkt C(A)</th>
+                  <th data-i18n="h2h.captainB">Kapitan B</th>
+                  <th data-i18n="h2h.captainBPts">Pkt C(B)</th>
+                  <th data-i18n="h2h.captainWinner">Wygrany pojedynku</th>
+                </tr></thead>
+                <tbody id="h2h-captains-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- VARIANCE TAB -->
+          <div id="h2h-variance-tab" style="display:none">
+            <div style="padding:12px 16px;color:var(--text-dim);font-size:0.85rem" data-i18n="h2h.varianceDesc">Kto ma najbardziej wahliwy sezon?</div>
+            <div style="overflow-x:auto">
+              <table>
+                <thead><tr>
+                  <th>#</th>
+                  <th data-i18n="ketchup.webName">Zawodnik</th>
+                  <th data-i18n="h2h.maxJump">Najw. skok</th>
+                  <th data-i18n="h2h.maxDrop">Najw. spadek</th>
+                  <th data-i18n="h2h.avgChange">Śr. zmiana/GW</th>
+                  <th data-i18n="h2h.stability">Stabilność</th>
+                </tr></thead>
+                <tbody id="h2h-variance-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- STREAKS TAB -->
+          <div id="h2h-streaks-tab" style="display:none">
+            <div id="h2h-streaks-content" style="padding:12px 16px"></div>
+          </div>
+
+        </div>
       </div>
     </div>
 

@@ -1,4 +1,11 @@
-import { getBootstrapStatic, getPlayerSummary, getManagerPicks, getLeagueStandings, getFixtures, fetchVaastavGW, fetchFPL } from "./api.js";
+import { getBootstrapStatic, getPlayerSummary, getManagerPicks, getLeagueStandings, getFixtures, fetchVaastavGW, fetchGWBatch, fetchFPL, getVaastavSeason, getVaastavCumulative, getVaastavPlayerCumulative, computeExpectedPoints, vaastavTeamId } from "./api.js";
+
+// Manager (FPL entry) IDs per season — the user's ID differs across seasons.
+const MANAGER_IDS = { "2026-27": 76582, "2025-26": 424097 };
+function managerIdForSeason(seasonDash) {
+  if (MANAGER_IDS[seasonDash] != null) return String(MANAGER_IDS[seasonDash]);
+  return MANAGER_IDS["2026-27"] != null ? String(MANAGER_IDS["2026-27"]) : "";
+}
 import { t, setLang, getLang } from "./i18n.js";
 import { TEAM_COORDS, REGIONS, travelDistance } from "./stadiums.js";
 
@@ -44,6 +51,61 @@ move(evt) {
   _ttEl.style.top = y + "px";
 }};
 document.addEventListener("mousemove", e => window._chartTT.move(e));
+
+window._setDiffMode = function(mode) {
+  top15DiffMode = mode;
+  renderTop15Charts();
+};
+window._sortDiffTable = function(field) {
+  if (top15DiffTableSort.field === field) {
+    top15DiffTableSort.dir = top15DiffTableSort.dir === "asc" ? "desc" : "asc";
+  } else {
+    top15DiffTableSort = { field, dir: field === "name" || field === "position" ? "asc" : "desc" };
+  }
+  renderTop15Charts();
+};
+window._sortPopTable = function(field) {
+  if (popTableSort.field === field) {
+    popTableSort.dir = popTableSort.dir === "asc" ? "desc" : "asc";
+  } else {
+    popTableSort = { field, dir: field === "name" || field === "position" ? "asc" : "desc" };
+  }
+  renderTop15Charts();
+};
+
+let allFixturesData = [];
+let fixturesLoaded = false;
+async function loadAllFixtures() {
+  if (fixturesLoaded) return allFixturesData;
+  try { allFixturesData = await getFixtures(); } catch { allFixturesData = []; }
+  fixturesLoaded = true;
+  return allFixturesData;
+}
+function getTeamUpcomingFixtures(teamId, count) {
+  if (!allFixturesData.length) return [];
+  return allFixturesData
+    .filter(f => !f.finished && (f.team_h === teamId || f.team_a === teamId))
+    .sort((a, b) => a.event - b.event)
+    .slice(0, count)
+    .map(f => {
+      const isHome = f.team_h === teamId;
+      const oppId = isHome ? f.team_a : f.team_h;
+      const diff = isHome ? f.team_h_difficulty : f.team_a_difficulty;
+      const opp = bootstrapData?.teams?.find(t => t.id === oppId);
+      return { gw: f.event, opponent: opp?.name || String(oppId), opponentShort: opp?.short_name || String(oppId), isHome, difficulty: diff || 3 };
+    });
+}
+function getTeamAvgFDR(teamId, count) {
+  const fx = getTeamUpcomingFixtures(teamId, count);
+  if (!fx.length) return 3;
+  return fx.reduce((s, f) => s + f.difficulty, 0) / fx.length;
+}
+function renderFixtureStrip(teamId, count, lang) {
+  const fx = getTeamUpcomingFixtures(teamId, count);
+  if (!fx.length) return "";
+  const diffBg = d => d <= 2 ? "#166534" : d === 3 ? "#854d0e" : "#991b1b";
+  return fx.map(f => `<span class="fdr-badge" style="background:${diffBg(f.difficulty)}" title="GW${f.gw}: ${f.isHome ? "vs" : "@"} ${f.opponent} (FDR ${f.difficulty})">${lang === "pl" ? "K" : "G"}${f.gw} ${f.isHome ? "vs" : "@"}${f.opponentShort} ${f.difficulty}</span>`).join("");
+}
 
 const TEAM_COLORS = {
   1: "#e30613", 2: "#670e36", 3: "#da291c", 4: "#e30613",
@@ -174,31 +236,85 @@ function detectSeason(data) {
   return "?";
 }
 
+function seasonShort(full) {
+  const m = String(full).match(/(\d{4})\D(\d{2})/);
+  if (!m) return String(full);
+  return `${m[1].slice(2)}/${m[2]}`;
+}
+
+function prevSeasonShort(full) {
+  const m = String(full).match(/(\d{4})\D(\d{2})/);
+  if (!m) return String(full);
+  const y1 = parseInt(m[1], 10) - 1;
+  const y2 = parseInt(m[2], 10) - 1;
+  return `${String(y1).slice(2)}/${y2}`;
+}
+
+// True when the current FPL season has at least one finished gameweek.
+function isCurrentSeasonStarted() {
+  return (bootstrapData?.events || []).some((e) => e.finished);
+}
+
+// The season to use for archived/vaastav data: the live season when it has
+// started, otherwise the most recent completed season (e.g. 25/26).
+function getEffectiveDataSeason() {
+  if (!bootstrapData) return "2025-26";
+  if (isCurrentSeasonStarted()) return detectSeason(bootstrapData).replace("/", "-");
+  return prevSeasonShort(detectSeason(bootstrapData)).replace("/", "-");
+}
+
 function updateSeasonBanner(data) {
   const banner = document.getElementById("season-banner");
   if (!banner || !data) return;
-  const gw = data.events?.find((e) => e.is_current) || data.events?.[data.events.length - 1];
-  const season = detectSeason(data);
+  const fullSeason = detectSeason(data);
+  const season = seasonShort(fullSeason);
+  const lastSeason = prevSeasonShort(fullSeason);
   const lang = getLang();
-  const finished = gw?.finished;
+  const events = data.events || [];
+  const currentGW = events.find((e) => e.is_current);
+  const seasonStarted = !!currentGW || events.some((e) => e.finished);
   const now = new Date();
   const timeStr = now.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" });
   const dateStr = now.toLocaleDateString("pl-PL");
-  const gwLabel = gw ? `GW${gw.id ?? "?"}` : "";
-  const statusLine = finished
-    ? `<strong>${t("common.seasonFinished")}</strong> — ${lang === "pl" ? "Dane z" : "Data from"} ${season}`
-    : `${gwLabel} · ${lang === "pl" ? "Dane bieżące (26/27)" : "Current data (26/27)"}`;
-  const note = lang === "pl"
-    ? "Ceny i skład: 26/27. Punkty, forma, xP: sezon 25/26 (ostatni ukończony)."
-    : "Prices & squads: 26/27. Points, form, xP: 25/26 season (last completed).";
-  banner.innerHTML = `${lang === "pl" ? "Sezon" : "Season"} ${season} · ${statusLine} · ${data.elements?.length ?? "?"} ${t("common.players")} · <span style="opacity:0.6">${lang === "pl" ? "Pobrano" : "Fetched"}: ${dateStr} ${timeStr}</span><div style="font-size:0.72rem;color:var(--text-dim);margin-top:2px">${note}</div>`;
+
+  let statusLine;
+  if (!seasonStarted) {
+    statusLine = lang === "pl" ? `Przed startem sezonu ${season}` : `Pre-season (${season})`;
+  } else if (currentGW && currentGW.finished) {
+    statusLine = lang === "pl" ? `Sezon ${season} zakończony` : `${season} season finished`;
+  } else if (currentGW) {
+    statusLine = `GW${currentGW.id} · ${lang === "pl" ? `Dane bieżące (${season})` : `Current data (${season})`}`;
+  } else {
+    statusLine = lang === "pl" ? `Dane bieżące (${season})` : `Current data (${season})`;
+  }
+
+  let note;
+  if (!seasonStarted) {
+    note = lang === "pl"
+      ? `Ceny i składy: ${season} (nowy sezon — dane mogą być puste przed startem). Punkty, forma i xP pojawią się po rozpoczęciu rozgrywek. Dane archiwalne (${lastSeason}) są dostępne w sekcjach „Archiwum” i „Historia ceny”.`
+      : `Prices & squads: ${season} (new season — may be empty before kick-off). Points, form and xP appear once the season starts. Archived data (${lastSeason}) is available in „Archive” and „Price History”.`;
+  } else {
+    note = lang === "pl"
+      ? `Dane bieżące z sezonu ${season} (punkty, forma i xP na żywo z oficjalnego API FPL).`
+      : `Live data from ${season} (points, form and xP from the official FPL API).`;
+  }
+
+  banner.innerHTML = `${lang === "pl" ? "Sezon" : "Season"} ${fullSeason} · ${statusLine} · ${data.elements?.length ?? "?"} ${t("common.players")} · <span style="opacity:0.6">${lang === "pl" ? "Pobrano" : "Fetched"}: ${dateStr} ${timeStr}</span><div style="font-size:0.72rem;color:var(--text-dim);margin-top:2px">${note}</div>`;
+
+  const curOpt = document.querySelector('#pricehistory-season option[value="current"]');
+  if (curOpt) curOpt.textContent = lang === "pl" ? `Bieżący (${season})` : `Current (${season})`;
 }
 
 function applyTranslations() {
   document.querySelectorAll("[data-i18n]").forEach((el) => {
     const key = el.dataset.i18n;
     const val = t(key);
-    if (val !== key) el.textContent = val;
+    if (val === key) return;
+    if (el.tagName === "OPTGROUP") {
+      el.label = val;
+    } else {
+      el.textContent = val;
+    }
   });
   document.querySelectorAll("[data-i18n-text]").forEach((el) => {
     const key = el.dataset.i18nText;
@@ -359,50 +475,111 @@ function populateKetchupTeamFilter() {
   sel.value = ketchupFilterState.team;
 }
 
-function getKetchupLeadersData() {
-  if (!bootstrapData) return [];
+async function getKetchupLeadersData() {
+  const season = document.getElementById("ketchup-season")?.value || "current";
   const posFilter = parseInt(ketchupFilterState.pos);
   const teamFilter = parseInt(ketchupFilterState.team);
   const gwFilter = parseInt(ketchupFilterState.gws);
 
-  const allGWs = bootstrapData.events || [];
-  const finishedGWs = allGWs.filter(e => e.finished);
-  const maxGW = finishedGWs.length > 0 ? finishedGWs[finishedGWs.length - 1].id : 38;
+  let players = [];
+  let playedGWs = 1;
 
-  let players = bootstrapData.elements.filter(p => p.now_cost > 0);
+  if (season === "current") {
+    if (!bootstrapData) return [];
+    const allGWs = bootstrapData.events || [];
+    const finishedGWs = allGWs.filter(e => e.finished);
+    const maxGW = finishedGWs.length > 0 ? finishedGWs[finishedGWs.length - 1].id : 0;
+    if (maxGW === 0) {
+      // Current season not started yet — fall back to the last completed season
+      // (vaastav has no gw CSVs for the upcoming season until GW1).
+      const lastSeason = prevSeasonShort(detectSeason(bootstrapData)).replace("/", "-");
+      const cum = await getVaastavPlayerCumulative(lastSeason, 38);
+      const posMap = { GK: 1, DEF: 2, MID: 3, FWD: 4 };
+      players = Object.keys(cum).map(id => {
+        const c = cum[id];
+        return {
+          id: parseInt(id, 10),
+          web_name: c.name,
+          team: parseInt(c.team, 10) || c.team,
+          element_type: posMap[c.position] || 0,
+          total_points: c.total_points,
+          xPts: c.xPts,
+        };
+      });
+      playedGWs = 38;
+    } else {
+      playedGWs = finishedGWs.length;
+      const vSeason = detectSeason(bootstrapData).replace("/", "-");
+      const cum = await getVaastavPlayerCumulative(vSeason, maxGW);
+      players = bootstrapData.elements.filter(p => p.now_cost > 0).map(p => {
+        const c = cum[String(p.id)] || { total_points: p.total_points, xPts: 0 };
+        return {
+          id: p.id,
+          web_name: p.web_name,
+          team: p.team,
+          element_type: p.element_type,
+          total_points: c.total_points || p.total_points,
+          xPts: c.xPts || 0,
+        };
+      });
+    }
+  } else {
+    const cum = await getVaastavPlayerCumulative(season, 38);
+    const posMap = { GK: 1, DEF: 2, MID: 3, FWD: 4 };
+    players = Object.keys(cum).map(id => {
+      const c = cum[id];
+      return {
+        id: parseInt(id, 10),
+        web_name: c.name,
+        team: parseInt(c.team, 10) || c.team,
+        element_type: posMap[c.position] || 0,
+        total_points: c.total_points,
+        xPts: c.xPts,
+      };
+    });
+    playedGWs = 38;
+  }
+
   if (posFilter > 0) players = players.filter(p => p.element_type === posFilter);
   if (teamFilter > 0) players = players.filter(p => p.team === teamFilter);
 
   if (gwFilter > 0) {
+    const played = Math.max(playedGWs, 1);
+    const scale = Math.min(gwFilter, played) / played;
     return players.map(p => {
-      const xGI_all = (parseFloat(p.expected_goals) || 0) + (parseFloat(p.expected_assists) || 0);
-      const xPts_all = xGI_all * 4;
-      const seasonPts = p.total_points;
-      const scale = gwFilter / Math.max(finishedGWs.length, 1);
-      const approxPts = Math.round(seasonPts * scale);
-      const approxXPts = xPts_all * scale;
-      const diff = approxPts - approxXPts;
-      return { ...p, xPts: approxXPts, diff, pts: approxPts };
+      const approxPts = Math.round(p.total_points * scale);
+      const approxXPts = p.xPts * scale;
+      return { ...p, pts: approxPts, diff: approxPts - approxXPts };
     });
   }
 
-  return players.map(p => {
-    const xGI = (parseFloat(p.expected_goals) || 0) + (parseFloat(p.expected_assists) || 0);
-    const xPts = xGI * 4;
-    const diff = p.total_points - xPts;
-    return { ...p, xPts, diff, pts: p.total_points };
-  });
+  return players.map(p => ({ ...p, pts: p.total_points, diff: p.total_points - p.xPts }));
 }
 
-function renderKetchupLeaders() {
+async function renderKetchupLeaders() {
   const lang = getLang();
   const el = document.getElementById("ketchup-leaders");
   if (!el) return;
 
   populateKetchupTeamFilter();
 
-  const scored = getKetchupLeadersData();
+  let scored = [];
+  try {
+    scored = await getKetchupLeadersData();
+  } catch (e) {
+    console.error("Ketchup leaders failed:", e);
+    el.innerHTML = `<div class="placeholder">${lang === "pl" ? "Błąd ładowania danych archiwalnych. Spróbuj ponownie." : "Error loading archived data. Please try again."}</div>`;
+    return;
+  }
   const totalFiltered = scored.length;
+  if (totalFiltered === 0) {
+    const season = document.getElementById("ketchup-season")?.value || "current";
+    const msg = season === "current"
+      ? (lang === "pl" ? "Brak danych: bieżący sezon jeszcze się nie rozpoczął (xP z live FPL = 0)." : "No data: the current season hasn't started yet (live xP = 0).")
+      : (lang === "pl" ? "Brak danych xP dla wybranego sezonu." : "No xP data available for the selected season.");
+    el.innerHTML = `<div class="placeholder">${msg}</div>`;
+    return;
+  }
   const underrated = [...scored].sort((a, b) => b.diff - a.diff);
   const overrated = [...scored].sort((a, b) => a.diff - b.diff);
 
@@ -576,60 +753,147 @@ async function runKetchup() {
   if (!bootstrapData) return;
   if (!ketchupSelectedId) return;
 
-  const gwCount = parseInt(document.getElementById("ketchup-gw-count").value);
-  const allGWs = bootstrapData.events || [];
-  const finishedGWs = allGWs.filter((e) => e.finished);
-  const lastGW = finishedGWs.length > 0 ? finishedGWs[finishedGWs.length - 1] : allGWs[allGWs.length - 1];
-  const maxGW = lastGW?.id || 38;
-  const startGW = Math.max(1, maxGW - gwCount + 1);
+  const season = document.getElementById("ketchup-season")?.value || "current";
+  const gwCount = parseInt(document.getElementById("ketchup-gw-count").value) || 10;
+  const lang = getLang();
 
   showSection("ketchup", "loading");
 
   try {
-    const summary = await cachedPlayerSummary(ketchupSelectedId);
-    const history = summary.history || [];
-    const relevant = history
-      .filter((h) => h.round >= startGW && h.round <= maxGW)
-      .sort((a, b) => a.round - b.round);
+    let history = [];
+    let seasonLabel = "";
 
-    if (relevant.length === 0) {
-      document.getElementById("ketchup-placeholder").style.display = "";
-      document.getElementById("ketchup-chart-wrap").style.display = "none";
-      showSection("ketchup", "placeholder");
-      return;
+    if (season === "current") {
+      const allGWs = bootstrapData.events || [];
+      const finishedGWs = allGWs.filter((e) => e.finished);
+      const maxGW = finishedGWs.length > 0 ? finishedGWs[finishedGWs.length - 1].id : 0;
+      if (maxGW === 0) {
+        // Current season not started — show the last completed season instead.
+        const lastSeason = prevSeasonShort(detectSeason(bootstrapData)).replace("/", "-");
+        seasonLabel = seasonShort(lastSeason.replace("-", "/"));
+        const startGW = Math.max(1, 38 - gwCount + 1);
+        history = await getKetchupArchivedHistory(lastSeason, ketchupSelectedId, startGW, 38);
+      } else {
+        const startGW = Math.max(1, maxGW - gwCount + 1);
+        const summary = await cachedPlayerSummary(ketchupSelectedId);
+        history = (summary.history || [])
+          .filter((h) => h.round >= startGW && h.round <= maxGW)
+          .sort((a, b) => a.round - b.round);
+        seasonLabel = seasonShort(detectSeason(bootstrapData));
+      }
+      if (history.length === 0) {
+        const phSeason = seasonShort(detectSeason(bootstrapData));
+        const lastSeason = prevSeasonShort(detectSeason(bootstrapData));
+        document.getElementById("ketchup-placeholder").innerHTML = `<div class="placeholder-icon">⚽</div>
+          <div>${lang === "pl" ? `Brak danych dla bieżącego sezonu ${phSeason}` : `No data for the current ${phSeason} season`}</div>
+          <div style="color:var(--text-dim);font-size:0.85rem;margin-top:4px">${lang === "pl" ? `Sezon jeszcze się nie rozpoczął. Wybierz sezon archiwalny (np. ${lastSeason}) z listy powyżej.` : `The season hasn't started yet. Pick an archived season (e.g. ${lastSeason}) from the list above.`}</div>`;
+        showSection("ketchup", "placeholder");
+        document.getElementById("ketchup-chart-wrap").style.display = "none";
+        return;
+      }
+    } else {
+      const maxGW = 38;
+      const startGW = Math.max(1, maxGW - gwCount + 1);
+      seasonLabel = seasonShort(season.replace("-", "/"));
+      history = await getKetchupArchivedHistory(season, ketchupSelectedId, startGW, maxGW);
+      if (history.length === 0) {
+        document.getElementById("ketchup-placeholder").innerHTML = `<div class="placeholder-icon">⚽</div>
+          <div>${lang === "pl" ? `Brak danych archiwalnych dla sezonu ${seasonLabel}.` : `No archived data for the ${seasonLabel} season.`}</div>`;
+        showSection("ketchup", "placeholder");
+        document.getElementById("ketchup-chart-wrap").style.display = "none";
+        return;
+      }
     }
 
+    const startGW = history[0].round;
+    const maxGW = history[history.length - 1].round;
     const player = bootstrapData.elements.find((p) => p.id === ketchupSelectedId);
-    renderKetchupChart(player, relevant, startGW, maxGW);
+    renderKetchupChart(player, history, startGW, maxGW, seasonLabel);
     showSection("ketchup", "table");
     document.getElementById("ketchup-chart-wrap").style.display = "";
     document.getElementById("ketchup-placeholder").style.display = "none";
   } catch (err) {
-    document.getElementById("ketchup-placeholder").style.display = "";
-    document.getElementById("ketchup-chart-wrap").style.display = "none";
+    document.getElementById("ketchup-placeholder").innerHTML = `<div class="placeholder-icon">⚽</div>
+      <div>${lang === "pl" ? "Wystąpił błąd podczas ładowania danych." : "An error occurred while loading data."}</div>`;
     showSection("ketchup", "placeholder");
+    document.getElementById("ketchup-chart-wrap").style.display = "none";
   }
 }
 
-function renderKetchupChart(player, data, startGW, maxGW) {
+// Estimate expected points (xP) from FPL's expected stats — defined in api.js.
+
+// Lowercases and strips diacritics so names from different sources (bootstrap
+// first_name/second_name vs vaastav "First Last") compare reliably.
+function normalizeName(s) {
+  return (s || "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+// Builds the full name (first + second) the way vaastav writes it in its CSV
+// (e.g. "Bruno Fernandes"), instead of the short web_name ("B.Fernandes").
+function getFullPlayerName(player) {
+  return normalizeName(`${player.first_name || ""} ${player.second_name || ""}`);
+}
+
+function findVaastavRow(csv, player) {
+  const fullName = getFullPlayerName(player);
+  const lastName = normalizeName(player.second_name);
+  let match = csv.find((r) => fullName && r.name && normalizeName(r.name) === fullName);
+  if (!match && lastName) {
+    match = csv.find((r) => r.name && normalizeName(r.name).endsWith(" " + lastName));
+  }
+  return match;
+}
+
+async function getKetchupArchivedHistory(season, playerId, startGW, maxGW) {
+  const player = bootstrapData.elements.find((p) => p.id === playerId);
+  if (!player) return [];
+  const gws = [];
+  for (let gw = startGW; gw <= maxGW; gw++) gws.push(gw);
+  const fetched = await fetchGWBatch(season, gws);
+  const rows = [];
+  for (const gw of gws) {
+    const csv = fetched[gw] || [];
+    const match = findVaastavRow(csv, player);
+    if (!match) continue;
+    rows.push({
+      round: gw,
+      total_points: parseInt(match.total_points) || 0,
+      expected_goal_involvements: parseFloat(match.expected_goal_involvements) || 0,
+      xP: computeExpectedPoints(match),
+      goals_scored: parseInt(match.goals_scored) || 0,
+      assists: parseInt(match.assists) || 0,
+    });
+  }
+  return rows.sort((a, b) => a.round - b.round);
+}
+
+function renderKetchupChart(player, data, startGW, maxGW, seasonLabel) {
   const lang = getLang();
   const color = TEAM_COLORS[player.team] || "#555";
   const posClass = `pos-${getPositionShort(player.element_type).toLowerCase()}`;
 
   // Player info
+  const seasonPts = data.reduce((s, d) => s + (d.total_points || 0), 0);
   const infoEl = document.getElementById("ketchup-player-info");
   infoEl.innerHTML = `
     <span class="team-color" style="background:${color};width:6px;height:28px;border-radius:3px;display:inline-block"></span>
     <span class="player-name">${player.web_name}</span>
     <span class="player-team">${getTeamName(player.team)}</span>
     <span class="pos-badge ${posClass}">${getPositionShort(player.element_type)}</span>
-    <span style="color:var(--text-dim);font-size:0.85rem">${(player.now_cost / 10).toFixed(1)}m · ${player.total_points} pkt</span>
+    <span style="color:var(--text-dim);font-size:0.85rem">${(player.now_cost / 10).toFixed(1)}m · ${seasonPts} pkt${seasonLabel ? ` · ${seasonLabel}` : ""}</span>
   `;
 
-  // Convert xGI to FPL points: xG*5 + xA*3 (approximate FPL scoring)
+  // Use real expected points (xP) from the source data when available;
+  // fall back to the xGI*4 proxy only for live-current history that lacks xP.
   const dataWithXP = data.map((d) => {
-    const xGI = parseFloat(d.expected_goal_involvements) || 0;
-    const xPts = xGI * 4; // average ~4 pts per goal involvement (blended 5+3)
+    const realXP = parseFloat(d.xP);
+    const xPts = !isNaN(realXP)
+      ? realXP
+      : (parseFloat(d.expected_goal_involvements) || 0) * 4;
     return {
       ...d,
       xPts: +xPts.toFixed(2),
@@ -724,10 +988,10 @@ function renderKetchupChart(player, data, startGW, maxGW) {
   const sumEl = document.getElementById("ketchup-summary");
   const iPl = (tip) => `<span class="info-icon stat-info" data-i18n-text="${tip}">i</span>`;
   const tipTotal = lang === "pl" ? "Suma wszystkich zdobytych punktów FPL w wybranych kolejkach" : "Sum of all FPL points scored in selected gameweeks";
-  const tipExpected = lang === "pl" ? "Suma oczekiwanych punktów (xP) na podstawie modelu xG. xP to oczekiwane zaangażowanie w gole (xG + xA) przeliczone na przybliżone punkty FPL (~4 pkt za involvement)" : "Sum of expected points (xP) based on the xG model. xP is expected goal involvements (xG + xA) converted to approximate FPL pts (~4 pts per involvement)";
+  const tipExpected = lang === "pl" ? "Suma oczekiwanych punktów (xP). Kolumna xP w danych jest pusta, więc xP jest szacowany z xG, xA i prawdopodobieństwa czystego konta (xGC) według punktacji FPL." : "Sum of expected points (xP). The source xP column is empty, so xP is estimated from xG, xA and clean-sheet probability (xGC) using FPL scoring.";
   const tipDiff = lang === "pl" ? "Różnica między rzeczywistymi a oczekiwanymi pkt. Dodatnia = zawodnik gra lepiej niż wskazuje xP (niedoszacowany). Ujemna = gra gorzej (przeszacowany)" : "Difference between actual and expected pts. Positive = player overperforming xP (undervalued). Negative = underperforming (overvalued)";
   const tipGA = lang === "pl" ? "Łączna liczba goli (G) i asyst (A) w wybranych kolejkach" : "Total goals (G) and assists (A) in selected gameweeks";
-  const tipXP = lang === "pl" ? "Expected Points — oczekiwane punkty na podstawie modelu xG. Suma xG (oczekiwane gole) i xA (oczekiwane asysty) przeliczone na punkty FPL" : "Expected Points — expected points based on the xG model. Sum of xG (expected goals) and xA (expected assists) converted to FPL points";
+  const tipXP = lang === "pl" ? "Expected Points (xP) — szacowane oczekiwane punkty z xG, xA i czystych kont (xGC). Uwzględnia m.in. występy, gole, asysty i czyste konta." : "Expected Points (xP) — estimated expected points from xG, xA and clean sheets (xGC), including appearances, goals, assists and clean sheets.";
   const tipOver = lang === "pl" ? "Liczba kolejkach w których zawodnik zdobył więcej pkt niż oczekiwano (ponad xP)" : "Number of gameweeks where player scored more pts than expected (over xP)";
   const tipUnder = lang === "pl" ? "Liczba kolejkach w których zawodnik zdobył mniej pkt niż oczekiwano (poniżej xP)" : "Number of gameweeks where player scored fewer pts than expected (under xP)";
 
@@ -771,6 +1035,7 @@ function runOptimizer() {
   const allPlayers = getOptimizedPlayers().filter((p) => p.now_cost > 0);
   const maxPerTeam = 3;
   const limits = { 1: 2, 2: 5, 3: 5, 4: 3 };
+  const lang = getLang();
 
   const lockedPlayers = optimizerLockedIds
     .map(id => allPlayers.find(p => p.id === id))
@@ -800,7 +1065,6 @@ function runOptimizer() {
   }
 
   if (!result.success) {
-    const lang = getLang();
     const msg = lockedPlayers.length > 0
       ? (lang === "pl" ? "Nie udało się dobrać pozostałych zawodników do zablokowanych. Zwiększ budżet lub zmień zablokowanych." : "Could not fill remaining slots with locked players. Increase budget or change locked players.")
       : (lang === "pl" ? "Nie udało się wybrać 15 zawodników w tym budżecie. Zwiększ budżet na suwaku." : "Could not select 15 players within this budget. Increase the budget slider.");
@@ -815,11 +1079,36 @@ function runOptimizer() {
     return;
   }
 
-  renderOptimizer();
-  document.getElementById("optimizer-pitch-wrap").style.display = "";
-  document.getElementById("optimizer-placeholder").style.display = "none";
-  document.getElementById("optimizer-charts").style.display = "";
-  renderOptimizerCharts();
+  loadAllFixtures().then(() => {
+    for (const p of optimizerSquad) {
+      const xGI = (parseFloat(p.expected_goals) || 0) + (parseFloat(p.expected_assists) || 0);
+      p.epNext = parseFloat(p.ep_next) || 0;
+      p.xgi = +xGI.toFixed(2);
+      p.chanceNext = p.chance_of_playing_next_round;
+      const upcoming = getTeamUpcomingFixtures(p.team, 5);
+      const avgFDR = upcoming.length > 0 ? upcoming.reduce((s, f) => s + f.difficulty, 0) / upcoming.length : 3;
+      p.avgFDR = +avgFDR.toFixed(1);
+      p.upcomingFixtures = upcoming;
+    }
+
+    const fixtureTeams = [...new Set(optimizerSquad.map(p => p.team))];
+    const fixtureEl = document.getElementById("optimizer-fixtures");
+    if (fixtureEl && fixtureTeams.length > 0) {
+      let fhtml = `<h3 style="font-size:0.95rem;margin:12px 0 10px;color:var(--text)">${lang === "pl" ? "Terminarz składu (5 kolejek)" : "Squad fixtures (5 GW)"}</h3>`;
+      for (const teamId of fixtureTeams) {
+        const color = TEAM_COLORS[teamId] || "#555";
+        fhtml += `<div class="fdr-row"><span class="team-color" style="background:${color}"></span><span style="font-weight:600;min-width:90px">${getTeamName(teamId)}</span><div class="fdr-badges">${renderFixtureStrip(teamId, 5, lang)}</div></div>`;
+      }
+      fixtureEl.innerHTML = fhtml;
+      fixtureEl.style.display = "";
+    }
+
+    renderOptimizer();
+    document.getElementById("optimizer-pitch-wrap").style.display = "";
+    document.getElementById("optimizer-placeholder").style.display = "none";
+    document.getElementById("optimizer-charts").style.display = "";
+    renderOptimizerCharts();
+  });
 }
 
 function solveOptimizerFull(budget, allPlayers, maxPerTeam, limits, lockedPlayers, lockedTeamCount) {
@@ -974,7 +1263,7 @@ function renderOptimizer() {
         ${locked}
       </div>
       <div class="pitch-jersey-name">${p.web_name}</div>
-      <div class="pitch-jersey-info">${(p.now_cost / 10).toFixed(1)}m · ${p.total_points} pkt</div>
+      <div class="pitch-jersey-info">${(p.now_cost / 10).toFixed(1)}m · ${p.total_points} pkt · ${(p.epNext || 0).toFixed(1)} exp</div>
     </div>`;
   }
 
@@ -1009,6 +1298,16 @@ function renderOptimizer() {
     const color = TEAM_COLORS[p.team] || "#555";
     const posClass = `pos-${getPositionShort(p.element_type).toLowerCase()}`;
     const lockLabel = p._locked ? `<span title="${lang === "pl" ? "Zawodnik na sztywno" : "Locked player"}" style="font-size:0.75rem;margin-right:3px">🔒</span>` : "";
+    const epColor = (p.epNext || 0) >= 4 ? "var(--green)" : (p.epNext || 0) >= 2 ? "var(--yellow)" : "var(--text-dim)";
+    let chanceHtml = "—";
+    if (p.chanceNext !== null && p.chanceNext !== undefined) {
+      const ch = parseInt(p.chanceNext);
+      const chClass = ch >= 75 ? "chance-ok" : ch >= 50 ? "chance-doubt" : "chance-out";
+      chanceHtml = `<span class="chance-badge ${chClass}">${ch}%</span>`;
+    } else if (p.status === "a") {
+      chanceHtml = `<span class="chance-badge chance-ok">100%</span>`;
+    }
+    const fdrColor = (p.avgFDR || 3) <= 2 ? "var(--green)" : (p.avgFDR || 3) <= 3 ? "var(--yellow)" : "var(--red)";
     return `<tr style="${p._locked ? 'background:rgba(37,99,235,0.08)' : ''}">
       <td class="rank-num">${i + 1}</td>
       <td>${lockLabel}${p.web_name}</td>
@@ -1016,8 +1315,15 @@ function renderOptimizer() {
       <td><span class="pos-badge ${posClass}">${getPositionShort(p.element_type)}</span></td>
       <td class="stat-val">${(p.now_cost / 10).toFixed(1)}</td>
       <td class="stat-val">${p.total_points}</td>
+      <td class="stat-val" style="color:${epColor}">${(p.epNext || 0).toFixed(1)}</td>
+      <td class="stat-val">${chanceHtml}</td>
+      <td class="stat-val">${(p.xgi || 0).toFixed(1)}</td>
+      <td class="stat-val" style="color:${fdrColor}">${p.avgFDR || "—"}</td>
     </tr>`;
   }).join("");
+
+  const totalEpNext = sorted.reduce((s, p) => s + (p.epNext || 0), 0);
+  const totalXGI = sorted.reduce((s, p) => s + (p.xgi || 0), 0);
 
   const summary = document.getElementById("optimizer-summary");
   summary.innerHTML = `
@@ -1038,12 +1344,12 @@ function renderOptimizer() {
       <div class="optimizer-stat-label">${lang === "pl" ? "Skład" : "Formation"}</div>
     </div>
     <div class="optimizer-stat-box">
-      <div class="optimizer-stat-val">${avgCost}m</div>
-      <div class="optimizer-stat-label">${lang === "pl" ? "Śr. cena" : "Avg price"}</div>
+      <div class="optimizer-stat-val">${totalEpNext.toFixed(1)}</div>
+      <div class="optimizer-stat-label">${lang === "pl" ? "exp pkt" : "exp pts"}</div>
     </div>
     <div class="optimizer-stat-box">
-      <div class="optimizer-stat-val">${avgPts}</div>
-      <div class="optimizer-stat-label">${lang === "pl" ? "Śr. pkt" : "Avg pts"}</div>
+      <div class="optimizer-stat-val">${totalXGI.toFixed(1)}</div>
+      <div class="optimizer-stat-label">xGI</div>
     </div>`;
 
   initTableSort("optimizer-table", optimizerSort, renderOptimizer, ["web_name", "now_cost", "total_points"]);
@@ -1306,9 +1612,147 @@ function renderHomeAwayLeaders() {
 
 // ===================== MY TEAM =====================
 
-async function runMyTeam() {
-  if (!bootstrapData) return;
-  const managerId = document.getElementById("myteam-id").value;
+// ===================== MY TEAM — CSV IMPORT =====================
+
+function parseMyTeamCSVRows(text) {
+  const rows = [];
+  let row = [], field = "", inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQ = false;
+      } else field += c;
+    } else {
+      if (c === '"') inQ = true;
+      else if (c === ',') { row.push(field); field = ""; }
+      else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ""; }
+      else if (c === '\r') { /* skip, handled by \n */ }
+      else field += c;
+    }
+  }
+  if (field.length > 0 || row.length > 0) { row.push(field); rows.push(row); }
+  return rows.filter(r => r.some(c => c.trim() !== ""));
+}
+
+function buildMyTeamOverride(text, alreadyDoubled) {
+  const rows = parseMyTeamCSVRows(text);
+  if (rows.length < 2) return null;
+  const header = rows[0].map(h => h.trim().toLowerCase());
+  const col = (...names) => header.findIndex(h => names.includes(h));
+  const iGw = col("round", "event", "gw", "gameweek", "kolejka");
+  const iSlot = col("position", "pos", "slot", "lp");
+  const iPoints = col("points", "pts", "punkty");
+  const iName = col("web_name", "name", "player", "zawodnik");
+  const iTeam = col("team", "druzyna");
+  const iCap = col("captain");
+  const iVice = col("vice_captain", "vicecaptain", "vice");
+  const iRole = col("field_position", "player_type", "role", "pozycja");
+  if (iName < 0 || iGw < 0 || iPoints < 0) return null;
+
+  const ROLE = { GK: 1, DEF: 2, MID: 3, FWD: 4 };
+  const playerIds = new Map();
+  const playerMeta = new Map();
+  const teamIds = new Map();
+  let nextPid = 1, nextTid = 1;
+  const gwPicksData = {};
+  const playerGwMap = {};
+  const gwRows = {};
+
+  for (let r = 1; r < rows.length; r++) {
+    const cells = rows[r];
+    const gw = parseInt(cells[iGw], 10);
+    if (!gw) continue;
+    (gwRows[gw] = gwRows[gw] || []).push(cells);
+  }
+
+  for (const gwKey of Object.keys(gwRows)) {
+    const gw = parseInt(gwKey, 10);
+    const parsed = gwRows[gw].map(cells => {
+      const name = (cells[iName] || "").trim();
+      if (!name) return null;
+      const pointsRaw = parseFloat(cells[iPoints]) || 0;
+      const slotRaw = iSlot >= 0 ? parseInt(cells[iSlot], 10) : NaN;
+      const isCaptain = iCap >= 0 ? /^(true|1|tak|yes)$/i.test((cells[iCap] || "").trim()) : false;
+      const isVice = iVice >= 0 ? /^(true|1|tak|yes)$/i.test((cells[iVice] || "").trim()) : false;
+      const teamName = iTeam >= 0 ? (cells[iTeam] || "").trim() : "";
+      const roleRaw = iRole >= 0 ? (cells[iRole] || "").trim().toUpperCase() : "";
+      return { name, pointsRaw, slotRaw, isCaptain, isVice, teamName, roleRaw };
+    }).filter(Boolean);
+
+    const assign = (p) => {
+      let id = playerIds.get(p.name);
+      if (!id) {
+        id = nextPid++;
+        playerIds.set(p.name, id);
+        let teamId = 0;
+        if (p.teamName) {
+          if (!teamIds.has(p.teamName)) teamIds.set(p.teamName, nextTid++);
+          teamId = teamIds.get(p.teamName);
+        }
+        playerMeta.set(id, { name: p.name, element_type: ROLE[p.roleRaw] || 3, teamId, totalBase: 0 });
+      }
+      return id;
+    };
+
+    let si = 1, bi = 12;
+    const picks = [];
+    for (const p of parsed) {
+      const id = assign(p);
+      const base = alreadyDoubled && p.isCaptain ? p.pointsRaw / 2 : p.pointsRaw;
+      playerMeta.get(id).totalBase += base;
+      if (!playerGwMap[id]) playerGwMap[id] = {};
+      playerGwMap[id][gw] = base;
+      let position;
+      if (!isNaN(p.slotRaw) && p.slotRaw >= 1) position = p.slotRaw;
+      else position = (si <= 11) ? si++ : bi++;
+      picks.push({ element: id, position, multiplier: p.isCaptain ? 2 : 1, is_captain: p.isCaptain, is_vice_captain: p.isVice });
+    }
+    const starters = picks.filter(p => p.position <= 11);
+    const gwTotal = starters.reduce((s, p) => s + (playerGwMap[p.element][gw] * p.multiplier), 0);
+    gwPicksData[gw] = { picks, entry_history: { points: Math.round(gwTotal) } };
+  }
+
+  const gws = Object.keys(gwPicksData).map(Number).sort((a, b) => a - b);
+  if (gws.length === 0) return null;
+
+  const elements = [];
+  for (const [id, m] of playerMeta) {
+    elements.push({ id, web_name: m.name, team: m.teamId, element_type: m.element_type, total_points: Math.round(m.totalBase) });
+  }
+  const teams = [];
+  for (const [name, id] of teamIds) teams.push({ id, name, short_name: name });
+
+  return { gwPicksData, playerGwMap, gws, syntheticBootstrap: { elements, teams } };
+}
+
+function runMyTeamCSV() {
+  const ta = document.getElementById("myteam-csv-input");
+  const text = ta ? ta.value : "";
+  const alreadyDoubled = document.getElementById("myteam-csv-doubled")?.checked || false;
+  const lang = getLang();
+  const parsed = text && text.trim() ? buildMyTeamOverride(text, alreadyDoubled) : null;
+  if (!parsed) {
+    document.getElementById("myteam-placeholder").innerHTML = `<div class="placeholder-icon">⚠️</div>
+      <div>${lang === "pl" ? "Nie rozpoznano danych w CSV." : "Could not parse the CSV."}</div>
+      <div style="color:var(--text-dim);font-size:0.85rem;margin-top:4px">${lang === "pl" ? "Oczekiwane nagłówki: round, position, points, web_name, team (opcjonalnie: captain, vice_captain, field_position)." : "Expected headers: round, position, points, web_name, team (optional: captain, vice_captain, field_position)."}</div>`;
+    showSection("myteam", "placeholder");
+    return;
+  }
+  const saved = bootstrapData;
+  bootstrapData = parsed.syntheticBootstrap;
+  try {
+    runMyTeam(parsed);
+  } finally {
+    bootstrapData = saved;
+  }
+}
+
+async function runMyTeam(override) {
+  if (!bootstrapData && !override) return;
+  const rawId = document.getElementById("myteam-id").value;
+  const managerId = (rawId && rawId.trim()) || managerIdForSeason(detectSeason(bootstrapData).replace("/", "-"));
   if (!managerId) return;
   const gwFilter = parseInt(document.getElementById("myteam-gw-filter").value || "0");
 
@@ -1325,8 +1769,19 @@ async function runMyTeam() {
     const maxGW = finishedGWs.length > 0 ? finishedGWs[finishedGWs.length - 1].id : 38;
     const startGW = gwFilter > 0 ? Math.max(1, maxGW - gwFilter + 1) : 1;
 
-    const gwPicksData = {};
+    let gwPicksData, playerGwMap, gws;
     let totalManagerPoints = 0;
+
+    if (override) {
+      if (!override.gws || override.gws.length === 0) {
+        document.getElementById("myteam-placeholder").innerHTML = `<div class="placeholder-icon">⚠️</div><div>${lang === "pl" ? "Brak danych w CSV." : "No data in CSV."}</div>`;
+        showSection("myteam", "placeholder");
+        return;
+      }
+      gwPicksData = override.gwPicksData;
+      playerGwMap = override.playerGwMap;
+      gws = override.gws;
+    } else {
 
     for (let gw = startGW; gw <= maxGW; gw++) {
       if (loadingEl) {
@@ -1340,8 +1795,13 @@ async function runMyTeam() {
       } catch {}
     }
 
-    const gws = Object.keys(gwPicksData).map(Number).sort((a, b) => a - b);
+    gws = Object.keys(gwPicksData).map(Number).sort((a, b) => a - b);
     if (gws.length === 0) {
+      const phSeason = seasonShort(detectSeason(bootstrapData));
+      const lastSeason = prevSeasonShort(detectSeason(bootstrapData));
+      document.getElementById("myteam-placeholder").innerHTML = `<div class="placeholder-icon">📋</div>
+        <div>${lang === "pl" ? `Brak danych dla sezonu ${phSeason}` : `No data for the ${phSeason} season`}</div>
+        <div style="color:var(--text-dim);font-size:0.85rem;margin-top:4px">${lang === "pl" ? `Sezon jeszcze się nie rozpoczął — skład będzie dostępny po starcie rozgrywek. Dane archiwalne (${lastSeason}) nie są dostępne dla tego menedżera przez API FPL.` : `The season hasn't started yet — the squad will be available once games begin. Archived data (${lastSeason}) isn't available for this manager via the FPL API.`}</div>`;
       showSection("myteam", "placeholder");
       return;
     }
@@ -1353,7 +1813,7 @@ async function runMyTeam() {
       }
     }
 
-    const playerGwMap = {};
+    playerGwMap = {};
     for (const pid of allPlayerIds) {
       try {
         const summary = await cachedPlayerSummary(pid);
@@ -1362,6 +1822,14 @@ async function runMyTeam() {
           playerGwMap[pid][h.round] = h.total_points;
         }
       } catch {}
+    }
+    }
+
+    const allPlayerIds = new Set();
+    for (const gw of gws) {
+      for (const pick of (gwPicksData[gw].picks || [])) {
+        allPlayerIds.add(pick.element);
+      }
     }
 
     const playerStats = {};
@@ -1930,11 +2398,18 @@ async function runPriceHistory() {
     } else if (season === "current") {
       const summary = await cachedPlayerSummary(priceHistorySelectedId);
       const history = summary.history || [];
-      if (history.length === 0) { showSection("pricehistory", "placeholder"); return; }
+      if (history.length === 0) {
+        const phSeason = seasonShort(detectSeason(bootstrapData));
+        document.getElementById("pricehistory-placeholder").innerHTML = `
+          <div class="placeholder-icon">📭</div>
+          <div>${lang === "pl" ? `Brak danych dla bieżącego sezonu ${phSeason}` : `No data for the current ${phSeason} season`}</div>
+          <div style="color:var(--text-dim);font-size:0.85rem;margin-top:4px">${lang === "pl" ? `Sezon jeszcze się nie rozpoczął. Wybierz sezon archiwalny (np. ${prevSeasonShort(detectSeason(bootstrapData))}) z listy powyżej.` : `The season hasn't started yet. Pick an archived season (e.g. ${prevSeasonShort(detectSeason(bootstrapData))}) from the list above.`}</div>`;
+        showSection("pricehistory", "placeholder");
+        return;
+      }
       renderPriceHistoryChartCurrent(history, priceHistorySelectedId);
     } else {
       const player = bootstrapData.elements.find(p => p.id === priceHistorySelectedId);
-      const playerName = player?.web_name || player?.first_name || "";
       const allGWData = [];
       for (let batch = 0; batch < 8; batch++) {
         const promises = [];
@@ -1943,10 +2418,7 @@ async function runPriceHistory() {
           if (gw > 38) break;
           promises.push(
             fetchVaastavGW(season, gw).then(csv => {
-              const match = csv.find(r =>
-                r.name && (r.name.toLowerCase().includes(playerName.toLowerCase()) ||
-                (player?.first_name && r.name.toLowerCase().includes(player.first_name.toLowerCase())))
-              );
+              const match = findVaastavRow(csv, player);
               if (match) return { gw, value: parseInt(match.value) || 0, points: parseInt(match.total_points) || 0 };
               return null;
             }).catch(() => null)
@@ -1992,13 +2464,12 @@ async function runPriceHistoryMultiSeason() {
         const history = summary.history || [];
         if (history.length > 0) {
           allSeasonData.push({
-            season: lang === "pl" ? "25/26" : "25/26",
+            season: lang === "pl" ? `Bieżący (${seasonShort(detectSeason(bootstrapData))})` : `Current (${seasonShort(detectSeason(bootstrapData))})`,
             color: seasonColors[si],
             data: history.map(h => ({ gw: h.round, value: (h.value || 0) / 10 }))
           });
         }
       } else {
-        const playerName = player.web_name || "";
         const gwData = [];
         for (let batch = 0; batch < 8; batch++) {
           const promises = [];
@@ -2007,7 +2478,7 @@ async function runPriceHistoryMultiSeason() {
             if (gw > 38) break;
             promises.push(
               fetchVaastavGW(s, gw).then(csv => {
-                const match = csv.find(r => r.name && r.name.toLowerCase().includes(playerName.toLowerCase()));
+                const match = findVaastavRow(csv, player);
                 return match ? { gw, value: (parseInt(match.value) || 0) / 10 } : null;
               }).catch(() => null)
             );
@@ -2372,8 +2843,6 @@ async function runTop15() {
 
   try {
     const batchSize = 5;
-    let totalManagers = 0;
-
     const seasonGWs = { "2025-26": 38, "2024-25": 38, "2023-24": 38, "2022-23": 38 };
     const totalGWs = seasonGWs[season] || 38;
     if (endGW > totalGWs) endGW = totalGWs;
@@ -2383,7 +2852,8 @@ async function runTop15() {
       const promises = [];
       for (let gw = batchStart; gw <= batchEnd; gw++) {
         promises.push(
-          fetchVaastavGW(season, gw).catch(() => {
+          fetchVaastavGW(season, gw).catch((err) => {
+            console.error(`Top15 gw${gw} (${season}) fetch failed:`, err && err.message);
             return fetchVaastavGW("2024-25", gw).catch(() => []);
           })
         );
@@ -2402,16 +2872,14 @@ async function runTop15() {
         }
         const posMap = { "GKP": 1, "DEF": 2, "MID": 3, "FWD": 4 };
 
-        if (totalManagers === 0 && csvData.length > 0) {
-          const sumSelected = csvData.reduce((acc, r) => acc + (parseInt(r.selected) || 0), 0);
-          if (sumSelected > 0) totalManagers = Math.round(sumSelected / 15);
-        }
+        const sumSelected = csvData.reduce((acc, r) => acc + (parseInt(r.selected) || 0), 0);
+        const gwManagers = sumSelected > 0 ? Math.round(sumSelected / 15) : 0;
         top15AllData[gw] = csvData.map((r) => ({
           name: r.name || "",
           team: teamNameToId[r.team] || 0,
           position: posMap[r.position] || 0,
           points: parseInt(r.total_points) || 0,
-          selected: totalManagers > 0 ? Math.round((parseInt(r.selected) || 0) / totalManagers * 1000) / 10 : parseInt(r.selected) || 0,
+          selected: gwManagers > 0 ? Math.round((parseInt(r.selected) || 0) / gwManagers * 1000) / 10 : parseInt(r.selected) || 0,
         }));
       });
     }
@@ -2509,11 +2977,10 @@ function renderTop15Charts() {
         ${yTicks}${xTicks}${paths}
       </svg>`;
 
-  } else {
+  } else if (top15Tab === "ownership") {
     const playerOwn = {};
     for (const gw of gws) {
-      const sorted = [...(top15AllData[gw] || [])].sort((a, b) => b.selected - a.selected).slice(0, 15);
-      for (const p of sorted) {
+      for (const p of (top15AllData[gw] || [])) {
         if (!playerOwn[p.name]) playerOwn[p.name] = { name: p.name, team: p.team, position: p.position, gwOwn: {} };
         playerOwn[p.name].gwOwn[gw] = p.selected;
       }
@@ -2582,6 +3049,407 @@ function renderTop15Charts() {
         <line class="chart-axis" x1="${pad.left}" y1="${pad.top + chartH}" x2="${pad.left + chartW}" y2="${pad.top + chartH}"/>
         ${yTicks}${xTicks}${paths}
       </svg>`;
+
+  } else if (top15Tab === "differentials") {
+    const posNames = { 1: "GKP", 2: "DEF", 3: "MID", 4: "FWD" };
+    const gwTop = {};
+    for (const gw of gws) {
+      gwTop[gw] = (top15AllData[gw] || [])
+        .filter(p => p.points > 0)
+        .map(p => {
+          const ownPct = p.selected > 0 ? p.selected : 0.1;
+          return { ...p, diff: p.points / ownPct };
+        })
+        .sort((a, b) => b.diff - a.diff)
+        .slice(0, 15);
+    }
+
+    const ttLang = lang === "pl" ? "pkt" : "pts";
+    const modeLabels = { scatter: lang === "pl" ? "Co kolejkę" : "Per GW", cumulative: lang === "pl" ? "Kumulatywny" : "Cumulative", lines: lang === "pl" ? "Liniowy" : "Lines" };
+    let modeToggles = `<div style="display:flex;gap:4px;margin-bottom:12px">`;
+    for (const [mode, label] of Object.entries(modeLabels)) {
+      const active = top15DiffMode === mode;
+      modeToggles += `<button onclick="window._setDiffMode('${mode}')" style="padding:4px 12px;border-radius:6px;border:1px solid #334155;background:${active ? '#3b82f6' : '#1e293b'};color:#e2e8f0;cursor:pointer;font-size:12px;font-weight:${active ? 700 : 400}">${label}</button>`;
+    }
+    modeToggles += `</div>`;
+
+    function buildTable(data) {
+      let rows = "";
+      data.forEach((r, i) => {
+        const color = colors[i % colors.length];
+        rows += `<tr>
+          <td style="text-align:center;color:${color};font-weight:${i < 3 ? 700 : 400}">${r.gw}</td>
+          <td style="text-align:center;color:${color};font-weight:${i < 3 ? 700 : 400}">${r.rank + 1}</td>
+          <td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:6px;vertical-align:middle"></span>${r.name}</td>
+          <td>${posNames[r.position] || ""}</td>
+          <td style="text-align:center">${r.points}</td>
+          <td style="text-align:center">${r.selected.toFixed(1)}%</td>
+          <td style="text-align:center;font-weight:700">${r.diff.toFixed(2)}</td>
+        </tr>`;
+      });
+      return rows;
+    }
+
+    function sortData(data) {
+      const s = top15DiffTableSort;
+      const sorted = [...data].sort((a, b) => {
+        let va = a[s.field], vb = b[s.field];
+        if (typeof va === "string") return s.dir === "asc" ? va.localeCompare(vb) : vb.localeCompare(va);
+        return s.dir === "asc" ? va - vb : vb - va;
+      });
+      return sorted;
+    }
+
+    function renderTable(data) {
+      const sorted = sortData(data);
+      const arrows = { asc: " ↑", desc: " ↓" };
+      const arrow = arrows[top15DiffTableSort.dir] || "";
+      const hdr = (field, label) => `<th style="padding:6px 8px;text-align:${field === "name" || field === "position" ? "left" : "center"};border-bottom:2px solid #334155;cursor:pointer;user-select:none" onclick="window._sortDiffTable('${field}')">${label}${top15DiffTableSort.field === field ? arrow : ""}</th>`;
+      const thGW = hdr("gw", lang === "pl" ? "Kolejka" : "GW");
+      const thRank = hdr("rank", "#");
+      const thName = hdr("name", lang === "pl" ? "Zawodnik" : "Player");
+      const thPos = hdr("position", lang === "pl" ? "Poz" : "Pos");
+      const thPts = hdr("points", lang === "pl" ? "Pkt" : "Pts");
+      const thOwn = hdr("selected", "%");
+      const thDiff = hdr("diff", "Pkt/%");
+      return `<div style="margin-top:16px;max-height:400px;overflow-y:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead><tr style="position:sticky;top:0;background:#1e293b;z-index:1">${thGW}${thRank}${thName}${thPos}${thPts}${thOwn}${thDiff}</tr></thead>
+          <tbody>${buildTable(sorted)}</tbody>
+        </table>
+      </div>`;
+    }
+
+    let gwSvg = "";
+    const svgW = 900, svgH = 420;
+    const pad = { top: 30, right: 20, bottom: 60, left: 60 };
+    const chartW = svgW - pad.left - pad.right;
+    const chartH = svgH - pad.top - pad.bottom;
+
+    function renderAxes(maxV, yFmt) {
+      let yT = "", xT = "";
+      for (let i = 0; i <= 5; i++) {
+        const val = (maxV / 5) * i;
+        const y = pad.top + chartH - (chartH / 5) * i;
+        yT += `<text class="chart-label" x="${pad.left - 6}" y="${y + 3}" text-anchor="end" font-size="10">${yFmt(val)}</text>`;
+        if (i > 0) yT += `<line class="chart-grid" x1="${pad.left}" y1="${y}" x2="${pad.left + chartW}" y2="${y}"/>`;
+      }
+      const xStep = Math.max(1, Math.floor(gws.length / 15));
+      for (let i = 0; i < gws.length; i++) {
+        if (i % xStep === 0 || gws.length <= 20) {
+          const x = pad.left + (gws.length > 1 ? (i / (gws.length - 1)) * chartW : chartW / 2);
+          xT += `<text class="chart-label" x="${x}" y="${svgH - pad.bottom + 18}" text-anchor="middle" font-size="10">GW${gws[i]}</text>`;
+        }
+      }
+      return { yTicks: yT, xTicks: xT };
+    }
+
+    function avoidLabelCollisions(labels) {
+      labels.sort((a, b) => a.x - b.x || a.y - b.y);
+      for (let i = 1; i < labels.length; i++) {
+        for (let j = Math.max(0, i - 3); j < i; j++) {
+          if (Math.abs(labels[i].x - labels[j].x) < 50 && Math.abs(labels[i].y - labels[j].y) < 11) {
+            labels[i].y = labels[j].y + (labels[i].y >= labels[j].y ? 11 : -11);
+          }
+        }
+      }
+      return labels;
+    }
+
+    if (top15DiffMode === "cumulative") {
+      const playerDiff = {};
+      for (const gw of gws) {
+        for (const p of (top15AllData[gw] || [])) {
+          if (p.points <= 0) continue;
+          const ownPct = p.selected > 0 ? p.selected : 0.1;
+          const diff = p.points / ownPct;
+          if (!playerDiff[p.name]) playerDiff[p.name] = { name: p.name, team: p.team, position: p.position, gwPts: {}, gwOwn: {}, gwDiff: {}, cumulative: [] };
+          playerDiff[p.name].gwPts[gw] = p.points;
+          playerDiff[p.name].gwOwn[gw] = p.selected;
+          playerDiff[p.name].gwDiff[gw] = diff;
+        }
+      }
+      const players = Object.values(playerDiff).map(p => {
+        let sum = 0;
+        const cum = [];
+        let totalPts = 0, totalOwn = 0, ownCount = 0;
+        for (const gw of gws) {
+          const d = p.gwDiff[gw] || 0;
+          sum += d;
+          cum.push(sum);
+          if (p.gwPts[gw] !== undefined) totalPts += p.gwPts[gw];
+          if (p.gwOwn[gw] !== undefined) { totalOwn += p.gwOwn[gw]; ownCount++; }
+        }
+        p.cumulative = cum;
+        p.total = sum;
+        p.totalPts = totalPts;
+        p.avgOwn = ownCount > 0 ? totalOwn / ownCount : 0;
+        return p;
+      }).sort((a, b) => b.total - a.total).slice(0, 15);
+
+      const maxVal = Math.max(...players.map(p => Math.max(...p.cumulative)), 1);
+      const { yTicks, xTicks } = renderAxes(maxVal, v => v.toFixed(1));
+
+      let paths = "";
+      const labelCandidates = [];
+      players.forEach((p, pi) => {
+        const color = colors[pi % colors.length];
+        let d = "";
+        const pts = [];
+        for (let i = 0; i < gws.length; i++) {
+          const x = pad.left + (gws.length > 1 ? (i / (gws.length - 1)) * chartW : chartW / 2);
+          const y = pad.top + chartH - (p.cumulative[i] / maxVal) * chartH;
+          d += (i === 0 ? "M" : "L") + ` ${x} ${y}`;
+          pts.push({ x, y, gw: gws[i], cum: p.cumulative[i], gwPts: p.gwPts[gws[i]] || 0, gwOwn: p.gwOwn[gws[i]], gwDiff: p.gwDiff[gws[i]] });
+        }
+        const ttHtml = pts.map(pt => {
+          const ownStr = pt.gwOwn !== undefined ? `${pt.gwOwn.toFixed(1)}%` : "-";
+          const diffStr = pt.gwDiff !== undefined ? pt.gwDiff.toFixed(2) : "-";
+          return `<span class="tt-dim">GW${pt.gw}:</span> <span class="tt-val">${pt.cum.toFixed(1)}</span> <span class="tt-dim">(+${pt.gwPts}${ttLang} / ${ownStr} = ${diffStr})</span>`;
+        }).join("<br>");
+        const tooltipHtml = `<div class="tt-name" style="color:${color}">${p.name} <span class="tt-dim">${posNames[p.position] || ""}</span></div>${ttHtml}<div class="tt-dim">Σ ${p.total.toFixed(1)} diff | ${p.totalPts} ${ttLang} | avg ${p.avgOwn.toFixed(1)}%</div>`;
+        paths += `<path class="chart-line" d="${d}" fill="none" stroke="${color}" stroke-width="2.5"/>`;
+        paths += `<path class="chart-hover-line" d="${d}" stroke-width="18"
+          onmouseenter="window._chartTT.show(event, this.getAttribute('data-tt'), ${pi})"
+          onmouseleave="window._chartTT.hide()" data-tt="${tooltipHtml.replace(/"/g, '&quot;')}"/>`;
+        pts.forEach(pt => {
+          paths += `<circle class="chart-dot" cx="${pt.x}" cy="${pt.y}" r="3" fill="${color}" stroke="#0f172a" stroke-width="1.5"/>`;
+          const ptTt = `<div class='tt-name' style='color:${color}'>${p.name}</div><span class='tt-dim'>GW${pt.gw}:</span> <span class='tt-val'>${pt.cum.toFixed(1)}</span> <span class='tt-dim'>(+${pt.gwPts}${ttLang} / ${pt.gwOwn !== undefined ? pt.gwOwn.toFixed(1) + "%" : "-"} = ${pt.gwDiff !== undefined ? pt.gwDiff.toFixed(2) : "-"})</span>`;
+          paths += `<circle class="chart-hover-dot" cx="${pt.x}" cy="${pt.y}"
+            onmouseenter="window._chartTT.show(event, this.getAttribute('data-tt'), ${pi})"
+            onmouseleave="window._chartTT.hide()" data-tt="${ptTt.replace(/"/g, '&quot;')}"/>`;
+        });
+        const lastX = pad.left + (gws.length > 1 ? ((gws.length - 1) / (gws.length - 1)) * chartW : chartW / 2);
+        labelCandidates.push({ x: lastX, y: pts[pts.length - 1].y, name: p.name, color });
+      });
+      avoidLabelCollisions(labelCandidates);
+      labelCandidates.forEach(l => {
+        paths += `<text x="${l.x + 4}" y="${l.y + 3}" font-size="9" fill="${l.color}" font-weight="600" opacity="0.9">${l.name}</text>`;
+      });
+
+      const title = lang === "pl" ? "Różnice kumulatywnie – kto budował przewagę?" : "Cumulative Differentials – who built the edge?";
+      const desc = lang === "pl" ? "Linie pokazują narastającą sumę pkt/posiadanie. Hover by zobaczyć szczegóły" : "Lines show growing sum of pts/ownership. Hover for details";
+      gwSvg = `<svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg" onmousemove="this._ttMove(event)">
+        <line class="chart-axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + chartH}"/>
+        <line class="chart-axis" x1="${pad.left}" y1="${pad.top + chartH}" x2="${pad.left + chartW}" y2="${pad.top + chartH}"/>
+        ${yTicks}${xTicks}${paths}</svg>`;
+      container.innerHTML = `
+        <h3 class="chart-title" style="margin-bottom:4px">${title}</h3>
+        <p class="chart-desc" style="margin-bottom:4px;font-size:12px;color:#94a3b8">${desc}</p>
+        ${modeToggles}${gwSvg}`;
+
+      top15DiffData = [];
+      gws.forEach((gw, gi) => { gwTop[gw].forEach((p, rank) => { top15DiffData.push({ gw: gi + 1, rank, name: p.name, position: p.position, points: p.points, selected: p.selected, diff: p.diff }); }); });
+      container.innerHTML += renderTable(top15DiffData);
+
+    } else {
+      const allDiffs = gws.flatMap(gw => gwTop[gw].map(p => p.diff));
+      const maxDiff = Math.max(...allDiffs, 1);
+      const { yTicks, xTicks } = renderAxes(maxDiff, v => v.toFixed(1));
+      let dots = "", labelsSvg = "";
+      const playerColorMap = {};
+      let ci = 0;
+
+      gws.forEach((gw, i) => {
+        const x = pad.left + (gws.length > 1 ? (i / (gws.length - 1)) * chartW : chartW / 2);
+        const ranked = gwTop[gw];
+        if (!ranked || ranked.length === 0) return;
+
+        if (top15DiffMode === "lines") {
+          ranked.forEach((p) => {
+            if (!playerColorMap[p.name]) { playerColorMap[p.name] = colors[ci % colors.length]; ci++; }
+          });
+        }
+
+        ranked.forEach((p, rank) => {
+          const y = pad.top + chartH - (p.diff / maxDiff) * chartH;
+          if (!playerColorMap[p.name]) { playerColorMap[p.name] = colors[ci % colors.length]; ci++; }
+          const col = playerColorMap[p.name];
+          const r = rank === 0 ? 5 : rank < 3 ? 4 : 3;
+          const opacity = rank === 0 ? 1 : rank < 3 ? 0.85 : 0.6;
+          const ptTt = `<div class='tt-name' style='color:${col}'>${p.name} <span class="tt-dim">${posNames[p.position] || ""}</span></div><span class="tt-dim">GW${gw} #${rank + 1}</span><br><span class="tt-val">${p.diff.toFixed(2)}</span> = ${p.points}${ttLang} / ${p.selected.toFixed(1)}%`;
+          dots += `<circle cx="${x}" cy="${y}" r="${r}" fill="${col}" stroke="#0f172a" stroke-width="1.5" opacity="${opacity}"
+            onmouseenter="window._chartTT.show(event, this.getAttribute('data-tt'), ${rank})"
+            onmouseleave="window._chartTT.hide()" data-tt="${ptTt.replace(/"/g, '&quot;')}"/>`;
+        });
+
+        if (ranked.length > 0) {
+          const top = ranked[0];
+          const topY = pad.top + chartH - (top.diff / maxDiff) * chartH;
+          const shortName = top.name.length > 14 ? top.name.split(" ").pop() : top.name;
+          const col = playerColorMap[top.name] || colors[0];
+          labelsSvg += `<text x="${x}" y="${topY - 9}" text-anchor="middle" font-size="8" fill="${col}" font-weight="600" opacity="0.9">${shortName}</text>`;
+        }
+      });
+
+      if (top15DiffMode === "lines") {
+        const lineByPlayer = {};
+        gws.forEach((gw, i) => {
+          const x = pad.left + (gws.length > 1 ? (i / (gws.length - 1)) * chartW : chartW / 2);
+          (gwTop[gw] || []).forEach((p, rank) => {
+            if (!lineByPlayer[p.name]) lineByPlayer[p.name] = [];
+            const y = pad.top + chartH - (p.diff / maxDiff) * chartH;
+            lineByPlayer[p.name].push({ x, y, gw, p, rank });
+          });
+        });
+        let lpi = 0;
+        Object.entries(lineByPlayer).forEach(([name, lpts]) => {
+          if (lpts.length < 2) return;
+          const col = playerColorMap[name] || "#888";
+          let d = "";
+          lpts.forEach((pt, j) => { d += (j === 0 ? "M" : "L") + ` ${pt.x} ${pt.y}`; });
+          const ttHtml = lpts.map(pt => `<span class="tt-dim">GW${pt.gw}:</span> <span class="tt-val">${pt.p.diff.toFixed(2)}</span> <span class="tt-dim">(${pt.p.points}${ttLang} / ${pt.p.selected.toFixed(1)}%)</span>`).join("<br>");
+          const toolHtml = `<div class="tt-name" style="color:${col}">${name}</div>${ttHtml}`;
+          dots += `<path class="chart-line" data-pi="${lpi}" d="${d}" fill="none" stroke="${col}" stroke-width="2.5"/>`;
+          dots += `<path class="chart-hover-line" data-pi="${lpi}" d="${d}" stroke-width="16"
+            onmouseenter="window._chartTT.show(event, this.getAttribute('data-tt'), ${lpi})"
+            onmouseleave="window._chartTT.hide()" data-tt="${toolHtml.replace(/"/g, '&quot;')}"/>`;
+          lpts.forEach(pt => {
+            dots += `<circle class="chart-dot" data-pi="${lpi}" cx="${pt.x}" cy="${pt.y}" r="3" fill="${col}" stroke="#0f172a" stroke-width="1.5"/>`;
+          });
+          lpi++;
+        });
+      }
+
+      const title = lang === "pl" ? "Różnice – Punkty / Posiadanie" : "Differentials – Points / Ownership";
+      const desc = lang === "pl" ? "Każda kolumna to jedna kolejka. Hover by zobaczyć Top 15 różnic" : "Each column = one GW. Hover to see Top 15 differentials";
+      gwSvg = `<svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg" onmousemove="this._ttMove(event)">
+        <line class="chart-axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + chartH}"/>
+        <line class="chart-axis" x1="${pad.left}" y1="${pad.top + chartH}" x2="${pad.left + chartW}" y2="${pad.top + chartH}"/>
+        ${yTicks}${xTicks}${dots}${labelsSvg}</svg>`;
+      container.innerHTML = `
+        <h3 class="chart-title" style="margin-bottom:4px">${title}</h3>
+        <p class="chart-desc" style="margin-bottom:4px;font-size:12px;color:#94a3b8">${desc}</p>
+        ${modeToggles}${gwSvg}`;
+
+      top15DiffData = [];
+      gws.forEach((gw, gi) => { gwTop[gw].forEach((p, rank) => { top15DiffData.push({ gw: gi + 1, rank, name: p.name, position: p.position, points: p.points, selected: p.selected, diff: p.diff }); }); });
+      container.innerHTML += renderTable(top15DiffData);
+
+      const popTitle = lang === "pl" ? "Różnice wśród popularnych – czy ktoś się wyróżniał?" : "Differentials among popular – anyone stand out?";
+      const popDesc = lang === "pl" ? "Top 30 najpopularniejszych (śr. posiadanie) — czy dało się zyskać nawet na liderach?" : "Top 30 most owned (avg) — could you gain even from the stars?";
+      const popPlayers = {};
+      for (const gw of gws) {
+        for (const p of (top15AllData[gw] || [])) {
+          if (p.points <= 0 || p.selected <= 0) continue;
+          if (!popPlayers[p.name]) popPlayers[p.name] = { name: p.name, team: p.team, position: p.position, gwPts: {}, gwOwn: {}, gwDiff: {} };
+          popPlayers[p.name].gwPts[gw] = p.points;
+          popPlayers[p.name].gwOwn[gw] = p.selected;
+          popPlayers[p.name].gwDiff[gw] = p.points / p.selected;
+        }
+      }
+      const popular = Object.values(popPlayers).map(p => {
+        let totalOwn = 0, cnt = 0, totalPts = 0, totalDiff = 0, diffCnt = 0;
+        for (const gw of gws) {
+          if (p.gwOwn[gw] !== undefined) { totalOwn += p.gwOwn[gw]; cnt++; }
+          if (p.gwDiff[gw] !== undefined) { totalDiff += p.gwDiff[gw]; diffCnt++; }
+          if (p.gwPts[gw] !== undefined) totalPts += p.gwPts[gw];
+        }
+        p.avgOwn = cnt > 0 ? totalOwn / cnt : 0;
+        p.totalPts = totalPts;
+        p.avgDiff = diffCnt > 0 ? totalDiff / diffCnt : 0;
+        return p;
+      }).filter(p => p.avgOwn >= 5).sort((a, b) => b.avgOwn - a.avgOwn).slice(0, 30);
+
+      if (popular.length > 0) {
+        const popAllDiffs = gws.flatMap(gw => popular.map(p => p.gwDiff[gw] || 0).filter(v => v > 0));
+        const popMaxDiff = Math.max(...popAllDiffs, 1);
+        let popYTicks = "", popXTicks = "", popDots = "", popLabels = "";
+        for (let i = 0; i <= 5; i++) {
+          const val = (popMaxDiff / 5) * i;
+          const y = pad.top + chartH - (chartH / 5) * i;
+          popYTicks += `<text class="chart-label" x="${pad.left - 6}" y="${y + 3}" text-anchor="end" font-size="10">${val.toFixed(1)}</text>`;
+          if (i > 0) popYTicks += `<line class="chart-grid" x1="${pad.left}" y1="${y}" x2="${pad.left + chartW}" y2="${y}"/>`;
+        }
+        const xStep = Math.max(1, Math.floor(gws.length / 15));
+        for (let i = 0; i < gws.length; i++) {
+          if (i % xStep === 0 || gws.length <= 20) {
+            const x = pad.left + (gws.length > 1 ? (i / (gws.length - 1)) * chartW : chartW / 2);
+            popXTicks += `<text class="chart-label" x="${x}" y="${svgH - pad.bottom + 18}" text-anchor="middle" font-size="10">GW${gws[i]}</text>`;
+          }
+        }
+
+        const popPlayerColors = {};
+        let pci = 0;
+        gws.forEach((gw, i) => {
+          const x = pad.left + (gws.length > 1 ? (i / (gws.length - 1)) * chartW : chartW / 2);
+          popular.forEach(p => {
+            const diff = p.gwDiff[gw];
+            if (diff === undefined) return;
+            if (!popPlayerColors[p.name]) { popPlayerColors[p.name] = colors[pci % colors.length]; pci++; }
+            const col = popPlayerColors[p.name];
+            const y = pad.top + chartH - (diff / popMaxDiff) * chartH;
+            const ptTt = `<div class='tt-name' style='color:${col}'>${p.name} <span class="tt-dim">${posNames[p.position] || ""} | avg ${p.avgOwn.toFixed(0)}%</span></div><span class="tt-dim">GW${gw}</span><br><span class="tt-val">${diff.toFixed(2)}</span> = ${p.gwPts[gw]}${ttLang} / ${p.gwOwn[gw].toFixed(1)}%`;
+            popDots += `<circle cx="${x}" cy="${y}" r="3.5" fill="${col}" stroke="#0f172a" stroke-width="1.5"
+              onmouseenter="window._chartTT.show(event, this.getAttribute('data-tt'))"
+              onmouseleave="window._chartTT.hide()" data-tt="${ptTt.replace(/"/g, '&quot;')}"/>`;
+          });
+        });
+        const popLabelCandidates = [];
+        popular.forEach(p => {
+          if (!popPlayerColors[p.name]) return;
+          let bestDiff = -1, bestX = pad.left, bestY = pad.top + chartH;
+          gws.forEach((gw, i) => {
+            if (p.gwDiff[gw] !== undefined && p.gwDiff[gw] > bestDiff) {
+              bestDiff = p.gwDiff[gw];
+              bestX = pad.left + (gws.length > 1 ? (i / (gws.length - 1)) * chartW : chartW / 2);
+              bestY = pad.top + chartH - (bestDiff / popMaxDiff) * chartH;
+            }
+          });
+          if (bestDiff >= 0) popLabelCandidates.push({ x: bestX, y: bestY - 6, name: p.name, color: popPlayerColors[p.name] });
+        });
+        avoidLabelCollisions(popLabelCandidates);
+        popLabelCandidates.forEach(l => {
+          popLabels += `<text x="${l.x + 4}" y="${l.y + 3}" font-size="8" fill="${l.color}" font-weight="600" opacity="0.9">${l.name}</text>`;
+        });
+
+        const popSvg = `<svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg" onmousemove="this._ttMove(event)">
+          <line class="chart-axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + chartH}"/>
+          <line class="chart-axis" x1="${pad.left}" y1="${pad.top + chartH}" x2="${pad.left + chartW}" y2="${pad.top + chartH}"/>
+          ${popYTicks}${popXTicks}${popDots}${popLabels}</svg>`;
+
+        let popTableRows = "";
+        const popSorted = [...popular].sort((a, b) => {
+          let va = a[popTableSort.field], vb = b[popTableSort.field];
+          if (typeof va === "string") return popTableSort.dir === "asc" ? va.localeCompare(vb) : vb.localeCompare(va);
+          return popTableSort.dir === "asc" ? va - vb : vb - va;
+        });
+        const popArrow = popTableSort.dir === "asc" ? " ↑" : " ↓";
+        const popHdr = (field, label) => `<th style="padding:6px 8px;text-align:${field === "name" || field === "position" ? "left" : "center"};border-bottom:2px solid #334155;cursor:pointer;user-select:none" onclick="window._sortPopTable('${field}')">${label}${popTableSort.field === field ? popArrow : ""}</th>`;
+        popSorted.forEach((p, pi) => {
+          const origIdx = popular.indexOf(p);
+          const col = popPlayerColors[p.name] || colors[origIdx % colors.length];
+          popTableRows += `<tr>
+            <td style="text-align:center;color:${col}">${pi + 1}</td>
+            <td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${col};margin-right:6px;vertical-align:middle"></span>${p.name}</td>
+            <td>${posNames[p.position] || ""}</td>
+            <td style="text-align:center">${p.avgOwn.toFixed(1)}%</td>
+            <td style="text-align:center">${p.totalPts}</td>
+            <td style="text-align:center;font-weight:700;color:${p.avgDiff > 0.5 ? '#22c55e' : p.avgDiff > 0.2 ? '#eab308' : '#94a3b8'}">${p.avgDiff.toFixed(2)}</td>
+          </tr>`;
+        });
+
+        container.innerHTML += `
+          <div style="margin-top:24px;padding-top:16px;border-top:1px solid #334155">
+            <h3 class="chart-title" style="margin-bottom:4px">${popTitle}</h3>
+            <p class="chart-desc" style="margin-bottom:8px;font-size:12px;color:#94a3b8">${popDesc}</p>
+            <div class="top15-chart" style="overflow-x:auto">${popSvg}</div>
+            <div style="margin-top:12px;max-height:300px;overflow-y:auto">
+              <table style="width:100%;border-collapse:collapse;font-size:13px">
+                <thead><tr style="position:sticky;top:0;background:#1e293b;z-index:1">
+                  ${popHdr("rank", "#")}
+                  ${popHdr("name", lang === "pl" ? "Zawodnik" : "Player")}
+                  ${popHdr("position", lang === "pl" ? "Poz" : "Pos")}
+                  ${popHdr("avgOwn", lang === "pl" ? "Śr. posiadanie" : "Avg ownership")}
+                  ${popHdr("totalPts", lang === "pl" ? "Suma pkt" : "Total pts")}
+                  ${popHdr("avgDiff", "Śr. Pkt/%")}
+                </tr></thead>
+                <tbody>${popTableRows}</tbody>
+              </table>
+            </div>
+          </div>`;
+      }
+    }
   }
 
   document.getElementById("top15-chart-wrap").style.display = "";
@@ -2589,9 +3457,16 @@ function renderTop15Charts() {
 
 // ===================== SQUAD BUILDER (WEIGHTED) =====================
 
+let top15DiffMode = "scatter";
+let top15DiffTableSort = { field: "diff", dir: "desc" };
+let top15DiffData = [];
+let popTableSort = { field: "avgOwn", dir: "desc" };
+
 let squadBuilderSort = { field: "compositeScore", dir: "desc" };
 let squadBuilderSquad = [];
 let squadBuilderFixtures = [];
+let squadBuilderBudget = 1000;
+let squadBuilderFDRCount = 5;
 
 function initSquadBuilder() {
   document.querySelectorAll(".weight-slider").forEach((slider) => {
@@ -2599,7 +3474,21 @@ function initSquadBuilder() {
     slider.addEventListener("input", () => { valEl.textContent = slider.value; });
   });
   document.getElementById("squadbuilder-run").addEventListener("click", runSquadBuilder);
+  const budgetSlider = document.getElementById("squadbuilder-budget-slider");
+  const budgetVal = document.getElementById("squadbuilder-budget-val");
+  if (budgetSlider && budgetVal) {
+    const updBudget = () => { budgetVal.textContent = (parseFloat(budgetSlider.value)).toFixed(1) + "m"; };
+    budgetSlider.addEventListener("input", updBudget);
+    updBudget();
+  }
   populateSquadBuilderGWs();
+  document.querySelectorAll("[data-fdrcount]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("[data-fdrcount]").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      squadBuilderFDRCount = parseInt(btn.dataset.fdrcount);
+    });
+  });
 }
 
 function populateSquadBuilderGWs() {
@@ -2630,6 +3519,8 @@ function renderFormExplanation(weights, teamFDR) {
   if (weights.xpts > 0) parts.push(`<b>xP</b>: ${lang === "pl" ? "(xG + xA) / max — oczekiwane zaangażowanie bramkowe z oficjalnych danych." : "(xG + xA) / max — expected goal involvement from official data."}`);
   if (weights.minutes > 0) parts.push(`<b>${lang === "pl" ? "Minuty" : "Minutes"}</b>: ${lang === "pl" ? "Rozegrane minuty / max — preferuje regularnych graczy." : "Minutes played / max — favors regular starters."}`);
   if (weights.distance > 0) parts.push(`<b>${lang === "pl" ? "Dystans" : "Distance"}</b>: ${lang === "pl" ? "1 − (śr. dystans wyjazdowy / max). Krótsze podróże = wyższy wynik." : "1 − (avg away dist / max). Shorter travel = higher score."}`);
+  if (weights.epnext > 0) parts.push(`<b>${lang === "pl" ? "Ep Next" : "Ep Next"}</b>: ${lang === "pl" ? "Oczekiwane punkty w najbliższej kolejce (ep_next z API FPL). Wyższe = lepszy." : "Expected points next GW (ep_next from FPL API). Higher = better."}`);
+  if (weights.chance > 0) parts.push(`<b>${lang === "pl" ? "Szansa gry" : "Play Chance"}</b>: ${lang === "pl" ? "Prawdopodobieństwo gry w najbliższej kolejce (0–100%). 100% = pewny występ." : "Probability of playing next GW (0–100%). 100% = guaranteed starter."}`);
 
   if (parts.length > 0) {
     el.style.display = "";
@@ -2644,71 +3535,53 @@ async function runSquadBuilder() {
   const weights = getWeights();
   const lang = getLang();
   const targetGW = parseInt(document.getElementById("squadbuilder-gw")?.value) || 0;
+  const fdrCount = squadBuilderFDRCount;
 
   showSection("squadbuilder", "loading");
   document.getElementById("squadbuilder-charts").style.display = "none";
   document.getElementById("squadbuilder-map-wrap").style.display = "none";
   document.getElementById("squadbuilder-fixtures").style.display = "none";
+  const budgetInitEl = document.getElementById("squadbuilder-budget");
+  if (budgetInitEl) budgetInitEl.style.display = "none";
 
   try {
-    let fixtures = [];
-    try { fixtures = await getFixtures(); } catch {}
+    await loadAllFixtures();
 
     const allPlayers = bootstrapData.elements.filter((p) => p.now_cost > 0);
 
     const maxForm = Math.max(...allPlayers.map((p) => parseFloat(p.form) || 0), 1);
     const maxXPts = Math.max(...allPlayers.map((p) => (parseFloat(p.expected_goals) || 0) + (parseFloat(p.expected_assists) || 0)), 0.01);
     const maxMinutes = Math.max(...allPlayers.map((p) => p.minutes || 0), 1);
+    const maxEpNext = Math.max(...allPlayers.map((p) => parseFloat(p.ep_next) || 0), 0.01);
 
-    const teamFDR = {};
-    const teamNextFixtures = {};
-    if (Array.isArray(fixtures)) {
-      const fdrCounts = {};
-      const fdrSums = {};
-      for (const f of fixtures) {
-        if (f.team_h && f.team_h_difficulty) {
-          fdrCounts[f.team_h] = (fdrCounts[f.team_h] || 0) + 1;
-          fdrSums[f.team_h] = (fdrSums[f.team_h] || 0) + f.team_h_difficulty;
-        }
-        if (f.team_a && f.team_a_difficulty) {
-          fdrCounts[f.team_a] = (fdrCounts[f.team_a] || 0) + 1;
-          fdrSums[f.team_a] = (fdrSums[f.team_a] || 0) + f.team_a_difficulty;
-        }
-      }
-      for (const teamId of Object.keys(fdrCounts)) {
-        teamFDR[teamId] = fdrSums[teamId] / fdrCounts[teamId];
-      }
-
-      if (targetGW) {
-        for (const f of fixtures) {
-          if (f.event !== targetGW) continue;
-          if (f.team_h) {
-            if (!teamNextFixtures[f.team_h]) teamNextFixtures[f.team_h] = [];
-            const opp = bootstrapData.teams?.find((t) => t.id === f.team_a);
-            teamNextFixtures[f.team_h].push({ opp: opp?.short_name || f.team_a, home: true, diff: f.team_h_difficulty });
-          }
-          if (f.team_a) {
-            if (!teamNextFixtures[f.team_a]) teamNextFixtures[f.team_a] = [];
-            const opp = bootstrapData.teams?.find((t) => t.id === f.team_h);
-            teamNextFixtures[f.team_a].push({ opp: opp?.short_name || f.team_h, home: false, diff: f.team_a_difficulty });
-          }
-        }
-      }
+    const teamAvgFDR = {};
+    for (const team of bootstrapData.teams || []) {
+      teamAvgFDR[team.id] = getTeamAvgFDR(team.id, fdrCount);
     }
-    const maxFDR = Math.max(...Object.values(teamFDR), 5);
-    const minFDR = Math.min(...Object.values(teamFDR), 1);
+    const maxFDR = Math.max(...Object.values(teamAvgFDR), 5);
+    const minFDR = Math.min(...Object.values(teamAvgFDR), 1);
     const fdrRange = maxFDR - minFDR || 1;
 
-    renderFormExplanation(weights, teamFDR);
+    renderFormExplanation(weights, teamAvgFDR);
 
     const scored = allPlayers.map((p) => {
       const form = (parseFloat(p.form) || 0) / maxForm;
-      const fdr = teamFDR[p.team] || 3;
+      const fdr = teamAvgFDR[p.team] || 3;
       const fixture = 1 - ((fdr - minFDR) / fdrRange);
       const xGI = (parseFloat(p.expected_goals) || 0) + (parseFloat(p.expected_assists) || 0);
       const xpts = xGI / maxXPts;
       const mins = (p.minutes || 0) / maxMinutes;
       const homeaway = form * 0.5 + xpts * 0.5;
+      const epNext = (parseFloat(p.ep_next) || 0) / maxEpNext;
+      const chanceRaw = p.chance_of_playing_next_round;
+      let chance = 1;
+      if (chanceRaw !== null && chanceRaw !== undefined) {
+        chance = chanceRaw / 100;
+      } else if (p.status === "d") {
+        chance = 0.5;
+      } else if (p.status === "i" || p.status === "s" || p.status === "u") {
+        chance = 0;
+      }
 
       let avgDist = 0;
       let distCount = 0;
@@ -2726,18 +3599,34 @@ async function runSquadBuilder() {
         (weights.homeaway || 0) * homeaway +
         (weights.xpts || 0) * xpts +
         (weights.minutes || 0) * mins +
-        (weights.distance || 0) * distance;
+        (weights.distance || 0) * distance +
+        (weights.epnext || 0) * epNext +
+        (weights.chance || 0) * chance;
 
-      return { ...p, compositeScore: +composite.toFixed(4), avgAwayDist: Math.round(avgDist) };
+      return {
+        ...p,
+        compositeScore: +composite.toFixed(4),
+        avgAwayDist: Math.round(avgDist),
+        epNext: parseFloat(p.ep_next) || 0,
+        chanceNext: p.chance_of_playing_next_round,
+        xgi: +xGI.toFixed(2),
+        avgFDR: +fdr.toFixed(1),
+      };
     });
 
     const maxPerTeam = 3;
     const limits = { 1: 2, 2: 5, 3: 5, 4: 3 };
     const squad = [];
     const teamCount = {};
+    let totalCost = 0;
 
+    const budgetM = parseFloat(document.getElementById("squadbuilder-budget-slider")?.value) || 100;
+    const squadBudget = Math.round(budgetM * 10);
+    squadBuilderBudget = squadBudget;
+
+    // Phase 1: build a minimum-cost valid squad (guarantees all 15 slots filled, always within budget)
     for (const pos of [1, 2, 3, 4]) {
-      const candidates = scored.filter((p) => p.element_type === pos && p.now_cost > 0).sort((a, b) => b.compositeScore - a.compositeScore);
+      const candidates = scored.filter((p) => p.element_type === pos && p.now_cost > 0).sort((a, b) => a.now_cost - b.now_cost);
       let picked = 0;
       for (const p of candidates) {
         if (picked >= limits[pos]) break;
@@ -2745,12 +3634,10 @@ async function runSquadBuilder() {
         if ((teamCount[p.team] || 0) >= maxPerTeam) continue;
         squad.push({ ...p });
         teamCount[p.team] = (teamCount[p.team] || 0) + 1;
+        totalCost += p.now_cost;
         picked++;
       }
     }
-
-    const squadBudget = 1000;
-    let totalCost = squad.reduce((s, p) => s + p.now_cost, 0);
     let improved = true;
     while (improved) {
       improved = false;
@@ -2760,7 +3647,7 @@ async function runSquadBuilder() {
         const candidates = scored.filter((p) => p.element_type === pos && p.id !== cur.id && p.compositeScore > cur.compositeScore && !squad.find((s) => s.id === p.id)).sort((a, b) => b.compositeScore - a.compositeScore);
         for (const c of candidates) {
           const costDiff = c.now_cost - cur.now_cost;
-          if (costDiff > (squadBudget - totalCost)) continue;
+          if (totalCost + costDiff > squadBudget) continue;
           if (cur.team !== c.team && (teamCount[c.team] || 0) >= maxPerTeam) continue;
           if (cur.team !== c.team) {
             teamCount[cur.team] = (teamCount[cur.team] || 1) - 1;
@@ -2776,38 +3663,25 @@ async function runSquadBuilder() {
 
     squadBuilderSquad = squad;
 
-    if (targetGW && teamNextFixtures && Object.keys(teamNextFixtures).length > 0) {
-      const fixtureTeams = [...new Set(squad.map((p) => p.team))];
-      const fixtureEl = document.getElementById("squadbuilder-fixtures");
-      if (fixtureEl) {
-        const diffColor = (d) => d <= 2 ? "var(--green)" : d === 3 ? "var(--yellow)" : "var(--red)";
-        let fhtml = `<h3 style="font-size:0.95rem;margin-bottom:10px;color:var(--text)">${lang === "pl" ? `Terminarz na GW${targetGW}` : `Fixtures for GW${targetGW}`}</h3><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px">`;
-        for (const teamId of fixtureTeams) {
-          const fixtures = teamNextFixtures[teamId] || [];
-          const color = TEAM_COLORS[teamId] || "#555";
-          for (const fx of fixtures) {
-            const vsLabel = fx.home ? `vs ${fx.opp}` : `@ ${fx.opp}`;
-            const badge = fx.home ? "🏠" : "✈️";
-            fhtml += `<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg);border-radius:6px;font-size:0.85rem">
-              <span class="team-color" style="background:${color}"></span>
-              <span style="font-weight:600">${getTeamName(teamId)}</span>
-              <span style="color:${diffColor(fx.diff)};font-weight:700">${badge} ${vsLabel}</span>
-              <span style="color:var(--text-dim);font-size:0.8rem;margin-left:auto">FDR ${fx.diff}</span>
-            </div>`;
-          }
-        }
-        fhtml += `</div>`;
-        fixtureEl.innerHTML = fhtml;
-        fixtureEl.style.display = "";
+    const fixtureTeams = [...new Set(squad.map((p) => p.team))];
+    const fixtureEl = document.getElementById("squadbuilder-fixtures");
+    if (fixtureEl && fixtureTeams.length > 0) {
+      let fhtml = `<h3 style="font-size:0.95rem;margin-bottom:10px;color:var(--text)">${lang === "pl" ? `Nadchodzące ${fdrCount} kolejek` : `Next ${fdrCount} gameweeks`}</h3>`;
+      for (const teamId of fixtureTeams) {
+        const color = TEAM_COLORS[teamId] || "#555";
+        fhtml += `<div class="fdr-row"><span class="team-color" style="background:${color}"></span><span style="font-weight:600;min-width:90px">${getTeamName(teamId)}</span><div class="fdr-badges">${renderFixtureStrip(teamId, fdrCount, lang)}</div></div>`;
       }
+      fixtureEl.innerHTML = fhtml;
+      fixtureEl.style.display = "";
     }
 
     renderSquadBuilder();
     showSection("squadbuilder", "table");
     document.getElementById("squadbuilder-charts").style.display = "";
-    renderSquadBuilderCharts();
-    renderSquadBuilderMap();
-  } catch {
+    try { renderSquadBuilderCharts(); } catch (e) { console.error("squadBuilder charts error:", e); }
+    try { renderSquadBuilderMap(); } catch (e) { console.error("squadBuilder map error:", e); }
+  } catch (err) {
+    console.error("runSquadBuilder error:", err);
     document.getElementById("squadbuilder-charts").style.display = "none";
     document.getElementById("squadbuilder-map-wrap").style.display = "none";
     document.getElementById("squadbuilder-fixtures").style.display = "none";
@@ -2819,6 +3693,7 @@ function renderSquadBuilderMap() {
   const container = document.getElementById("squadbuilder-map");
   if (!container || squadBuilderSquad.length === 0) return;
   const mapWrap = document.getElementById("squadbuilder-map-wrap");
+  if (typeof L === "undefined") { mapWrap.style.display = "none"; return; }
   mapWrap.style.display = "";
 
   if (squadMap) { squadMap.remove(); squadMap = null; }
@@ -2877,6 +3752,16 @@ function renderSquadBuilder() {
   tbody.innerHTML = sorted.map((p, i) => {
     const color = TEAM_COLORS[p.team] || "#555";
     const posClass = `pos-${getPositionShort(p.element_type).toLowerCase()}`;
+    const epColor = p.epNext >= 4 ? "var(--green)" : p.epNext >= 2 ? "var(--yellow)" : "var(--text-dim)";
+    let chanceHtml = "—";
+    if (p.chanceNext !== null && p.chanceNext !== undefined) {
+      const ch = parseInt(p.chanceNext);
+      const chClass = ch >= 75 ? "chance-ok" : ch >= 50 ? "chance-doubt" : "chance-out";
+      chanceHtml = `<span class="chance-badge ${chClass}">${ch}%</span>`;
+    } else if (p.status === "a") {
+      chanceHtml = `<span class="chance-badge chance-ok">100%</span>`;
+    }
+    const fdrColor = p.avgFDR <= 2 ? "var(--green)" : p.avgFDR <= 3 ? "var(--yellow)" : "var(--red)";
     return `<tr>
       <td class="rank-num">${i + 1}</td>
       <td>${p.web_name}</td>
@@ -2884,15 +3769,41 @@ function renderSquadBuilder() {
       <td><span class="pos-badge ${posClass}">${getPositionShort(p.element_type)}</span></td>
       <td class="stat-val">${(p.now_cost / 10).toFixed(1)}</td>
       <td class="stat-val">${p.total_points}</td>
+      <td class="stat-val" style="color:${epColor}">${p.epNext.toFixed(1)}</td>
+      <td class="stat-val">${chanceHtml}</td>
+      <td class="stat-val">${p.xgi.toFixed(1)}</td>
+      <td class="stat-val" style="color:${fdrColor}">${p.avgFDR}</td>
       <td class="stat-val" style="color:var(--text-dim)">${p.avgAwayDist || 0} km</td>
       <td class="stat-val" style="color:var(--accent)">${p.compositeScore.toFixed(3)}</td>
     </tr>`;
   }).join("") + `<tr class="optimizer-summary-row">
     <td colspan="5" style="font-weight:700;color:var(--accent)">${lang === "pl" ? "Podsumowanie" : "Summary"}</td>
     <td class="stat-val" style="font-weight:700;color:var(--accent)">${totalPts}</td>
+    <td class="stat-val" style="color:var(--accent)">${(sorted.reduce((s, p) => s + p.epNext, 0) / Math.max(sorted.length, 1)).toFixed(1)}</td>
+    <td></td><td></td><td></td>
     <td class="stat-val" style="font-weight:600">${(sorted.reduce((s, p) => s + (p.avgAwayDist || 0), 0) / Math.max(sorted.length, 1)).toFixed(0)} km</td>
     <td class="stat-val" style="font-weight:700;color:var(--accent)">${(totalCost / 10).toFixed(1)}m</td>
   </tr>`;
+
+  const budgetEl = document.getElementById("squadbuilder-budget");
+  if (budgetEl) {
+    budgetEl.style.display = "flex";
+    const totalM = totalCost / 10;
+    const budgetM = squadBuilderBudget / 10;
+    const remaining = budgetM - totalM;
+    const fits = remaining >= 0;
+    const remainingTxt = (fits ? (lang === "pl" ? "Zostało" : "Left") : (lang === "pl" ? "Przekroczenie" : "Over")) + `: ${remaining >= 0 ? "" : "-"}${Math.abs(remaining).toFixed(1)}m`;
+    budgetEl.className = "squadbuilder-budget " + (fits ? "budget-ok" : "budget-over");
+    budgetEl.innerHTML = `
+      <span class="budget-label">${lang === "pl" ? "Suma składu" : "Squad total"}:</span>
+      <span class="budget-total">${totalM.toFixed(1)}m</span>
+      <span class="budget-sep">/</span>
+      <span class="budget-label">${lang === "pl" ? "Budżet" : "Budget"}:</span>
+      <span class="budget-budget">${budgetM.toFixed(1)}m</span>
+      <span class="budget-remaining">(${remainingTxt})</span>
+      <span class="budget-status">${fits ? (lang === "pl" ? "✓ Mieści się" : "✓ Fits") : (lang === "pl" ? "✗ Powyżej budżetu" : "✗ Over budget")}</span>
+    `;
+  }
 }
 
 function renderSquadBuilderCharts() {
@@ -3132,6 +4043,7 @@ function renderStadiumsMap() {
       if (!stadiumsMapData) {
         stadiumsMapData = await computePLStandings();
       }
+      await loadAllFixtures();
       return stadiumsMapData;
     }
 
@@ -3217,6 +4129,10 @@ function renderStadiumsMap() {
             </div>
             <div style="border-top:1px solid #333;padding-top:6px;margin-top:6px;font-size:0.85rem">
               ${lang === "pl" ? "Śr. pozycja: " : "Avg position: "}<b>${avgPos.toFixed(1)}</b>
+            </div>
+            <div style="border-top:1px solid #333;padding-top:6px;margin-top:6px;font-size:0.8rem">
+              <div style="margin-bottom:4px;font-weight:600">${lang === "pl" ? "Terminarz (5 kolejek)" : "Fixtures (5 GW)"}</div>
+              <div style="display:flex;flex-wrap:wrap;gap:4px">${renderFixtureStrip(tid, 5, lang)}</div>
             </div>
           </div>
         `, { maxWidth: 280 });
@@ -3490,6 +4406,198 @@ function renderStadiumsDistances() {
   container.innerHTML = html;
 }
 
+// ===================== ARCHIVE (SEASON GAMEWEEKS) =====================
+
+let archiveState = { season: "2025-26", gw: 1, loaded: false, data: null };
+
+const ARCHIVE_SEASONS = [
+  { v: "2025-26", l: "25/26" },
+  { v: "2024-25", l: "24/25" },
+  { v: "2023-24", l: "23/24" },
+  { v: "2022-23", l: "22/23" },
+];
+
+function initArchive() {
+  const seasonSel = document.getElementById("archive-season");
+  const gwSel = document.getElementById("archive-gw");
+  if (!seasonSel || !gwSel) return;
+
+  seasonSel.innerHTML = ARCHIVE_SEASONS.map((o) => `<option value="${o.v}">${o.l}</option>`).join("");
+  seasonSel.value = archiveState.season;
+
+  seasonSel.addEventListener("change", async () => {
+    archiveState.season = seasonSel.value;
+    archiveState.loaded = false;
+    await loadArchiveSeason();
+    renderArchive();
+  });
+
+  gwSel.addEventListener("change", () => {
+    archiveState.gw = parseInt(gwSel.value) || 1;
+    renderArchive();
+  });
+
+  const runBtn = document.getElementById("archive-run");
+  if (runBtn) runBtn.addEventListener("click", renderArchive);
+}
+
+async function loadArchiveSeason() {
+  const lang = getLang();
+  showArchiveState("loading");
+  try {
+    archiveState.data = await getVaastavSeason(archiveState.season);
+    const events = archiveState.data.fixtures
+      .map((f) => parseInt(f.event, 10))
+      .filter((n) => n > 0);
+    const maxGW = events.length ? Math.max(...events) : 38;
+    const gwSel = document.getElementById("archive-gw");
+    let opts = "";
+    for (let g = 1; g <= maxGW; g++) opts += `<option value="${g}">GW ${g}</option>`;
+    gwSel.innerHTML = opts;
+    archiveState.gw = maxGW;
+    gwSel.value = String(maxGW);
+    archiveState.loaded = true;
+  } catch (err) {
+    showArchiveState("error", err.message);
+  }
+}
+
+function showArchiveState(state, msg) {
+  const loading = document.getElementById("archive-loading");
+  const placeholder = document.getElementById("archive-placeholder");
+  const results = document.getElementById("archive-results");
+  if (loading) loading.style.display = state === "loading" ? "" : "none";
+  if (placeholder) placeholder.style.display = state === "error" ? "" : "none";
+  if (results) results.style.display = state === "results" ? "" : "none";
+  if (state === "error" && placeholder) {
+    let errEl = placeholder.querySelector(".error-msg");
+    if (!errEl) {
+      errEl = document.createElement("div");
+      errEl.className = "error-msg";
+      placeholder.appendChild(errEl);
+    }
+    errEl.textContent = `${t("common.error")}: ${msg || ""}`;
+  }
+}
+
+async function renderArchive() {
+  if (!archiveState.loaded || !archiveState.data) {
+    await loadArchiveSeason();
+    if (!archiveState.loaded) return;
+  }
+  const lang = getLang();
+  const season = archiveState.season;
+  const gw = archiveState.gw;
+  const data = archiveState.data;
+
+  const fixtures = data.fixtures.filter((f) => parseInt(f.event, 10) === gw);
+  const cum = await getVaastavCumulative(season, gw);
+
+  let rows = [];
+  try { rows = await fetchVaastavGW(season, gw); } catch {}
+
+  renderArchiveFixtures(fixtures, data.teamMap, lang);
+  renderArchiveStandings(cum, data.teamMap, gw, lang);
+  renderArchiveTopPerformers(rows, data.teamMap, lang);
+
+  showArchiveState("results");
+}
+
+function renderArchiveFixtures(fixtures, teamMap, lang) {
+  const el = document.getElementById("archive-fixtures");
+  if (!el) return;
+  if (!fixtures.length) {
+    el.innerHTML = `<h3>${t("archive.fixtures")}</h3><div class="placeholder">${t("common.noData")}</div>`;
+    return;
+  }
+  const rowsHtml = fixtures.map((f) => {
+    const hId = f.team_h, aId = f.team_a;
+    const h = teamMap[hId] || { name: hId, short_name: hId };
+    const a = teamMap[aId] || { name: aId, short_name: aId };
+    const finished = f.finished === "True" || f.finished === true;
+    const score = finished ? `${f.team_h_score} - ${f.team_a_score}` : "vs";
+    const hColor = TEAM_COLORS[hId] || "#555";
+    const aColor = TEAM_COLORS[aId] || "#555";
+    return `<div class="fixture-row">
+      <span class="team-color" style="background:${hColor}"></span>
+      <span class="fixture-team">${h.short_name || h.name}</span>
+      <span class="fixture-score">${score}</span>
+      <span class="fixture-team" style="text-align:right">${a.short_name || a.name}</span>
+      <span class="team-color" style="background:${aColor}"></span>
+    </div>`;
+  }).join("");
+  el.innerHTML = `<h3>${t("archive.fixtures")}</h3>${rowsHtml}`;
+}
+
+function renderArchiveStandings(cum, teamMap, gw, lang) {
+  const el = document.getElementById("archive-standings");
+  if (!el) return;
+  const teams = Object.keys(cum)
+    .map((tid) => ({
+      id: tid,
+      name: teamMap[tid]?.name || tid,
+      short: teamMap[tid]?.short_name || tid,
+      pts: cum[tid] || 0,
+    }))
+    .sort((a, b) => b.pts - a.pts);
+  const rows = teams.map((tm, i) => {
+    const color = TEAM_COLORS[tm.id] || "#555";
+    return `<tr>
+      <td class="rank-num${i < 3 ? ` rank-${i + 1}` : ""}">${i + 1}</td>
+      <td><span class="team-color" style="background:${color}"></span>${tm.name}</td>
+      <td class="stat-val">${tm.pts}</td>
+    </tr>`;
+  }).join("");
+  el.innerHTML = `<h3>${t("archive.standings")} ${gw}</h3>
+    <table class="archive-table"><thead><tr>
+      <th>#</th><th>${t("archive.team")}</th><th>${t("archive.pts")}</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderArchiveTopPerformers(rows, teamMap, lang) {
+  const el = document.getElementById("archive-top");
+  if (!el) return;
+  const players = rows
+    .map((r) => ({ ...r, pts: parseInt(r.total_points, 10) || 0 }))
+    .sort((a, b) => b.pts - a.pts)
+    .slice(0, 25);
+  const rowsHtml = players.map((p, i) => {
+    const tid = vaastavTeamId(data, p.team);
+    const color = TEAM_COLORS[tid] || "#555";
+    const team = teamMap[tid]?.short_name || tid;
+    const opp = teamMap[p.opponent_team]?.short_name || p.opponent_team;
+    const isHome = p.was_home === "True" || p.was_home === true;
+    const ha = isHome ? t("archive.home") : t("archive.away");
+    const g = parseInt(p.goals_scored, 10) || 0;
+    const a = parseInt(p.assists, 10) || 0;
+    const cs = parseInt(p.clean_sheets, 10) || 0;
+    const bonus = parseInt(p.bonus, 10) || 0;
+    const minutes = parseInt(p.minutes, 10) || 0;
+    const xP = computeExpectedPoints(p);
+    const value = (parseFloat(p.value) || 0) / 10;
+    return `<tr>
+      <td class="rank-num">${i + 1}</td>
+      <td>${p.name}</td>
+      <td><span class="team-color" style="background:${color}"></span>${team}</td>
+      <td style="color:var(--text-dim)">${ha} ${opp}</td>
+      <td class="stat-val">${minutes}'</td>
+      <td class="stat-val">${g}</td>
+      <td class="stat-val">${a}</td>
+      <td class="stat-val">${cs}</td>
+      <td class="stat-val">${bonus}</td>
+      <td class="stat-val" style="color:var(--yellow)">${xP.toFixed(1)}</td>
+      <td class="stat-val" style="font-weight:700">${p.pts}</td>
+      <td style="color:var(--text-dim);font-size:0.8rem">${value.toFixed(1)}m</td>
+    </tr>`;
+  }).join("");
+  el.innerHTML = `<h3>${t("archive.top")}</h3>
+    <table class="archive-table"><thead><tr>
+      <th>#</th><th>${t("archive.player")}</th><th>${t("archive.team")}</th>
+      <th>${t("archive.opp")}</th><th>'</th><th>G</th><th>A</th><th>CS</th><th>B</th>
+      <th>xP</th><th>${t("archive.pts")}</th><th></th>
+    </tr></thead><tbody>${rowsHtml}</tbody></table>`;
+}
+
 // ===================== NAV =====================
 
 function initNav() {
@@ -3504,6 +4612,10 @@ function initNav() {
     if (page) page.classList.add("active");
     if (item.dataset.page === "stadiums" && bootstrapData) {
       setTimeout(() => renderStadiums(), 50);
+    }
+    if (item.dataset.page === "archive") {
+      if (!archiveState.loaded) loadArchiveSeason().then(renderArchive);
+      else renderArchive();
     }
   });
 }
@@ -3680,6 +4792,16 @@ function initKetchup() {
   document.getElementById("ketchup-gw-count").addEventListener("change", () => {
     if (bootstrapData && ketchupSelectedId) runKetchup();
   });
+  const seasonSel = document.getElementById("ketchup-season");
+  if (seasonSel) seasonSel.addEventListener("change", async () => {
+    try { await renderKetchupLeaders(); }
+    catch (e) { console.error("Ketchup leaders render failed:", e); }
+    if (!ketchupSelectedId && bootstrapData) {
+      const top = bootstrapData.elements.slice().sort((a, b) => (b.total_points || 0) - (a.total_points || 0))[0];
+      if (top) ketchupSelectedId = top.id;
+    }
+    if (bootstrapData && ketchupSelectedId) runKetchup();
+  });
 }
 
 function initHomeAway() {
@@ -3689,6 +4811,10 @@ function initHomeAway() {
 }
 
 function initMyTeam() {
+  const idEl = document.getElementById("myteam-id");
+  if (idEl && !idEl.value && bootstrapData) {
+    idEl.value = managerIdForSeason(detectSeason(bootstrapData).replace("/", "-"));
+  }
   document.getElementById("myteam-run").addEventListener("click", () => {
     if (bootstrapData) runMyTeam();
   });
@@ -3703,6 +4829,19 @@ function initMyTeam() {
       if (el) el.style.display = k === tabKey ? "" : "none";
     });
   });
+  const csvRun = document.getElementById("myteam-csv-run");
+  if (csvRun) csvRun.addEventListener("click", runMyTeamCSV);
+  const csvFile = document.getElementById("myteam-csv-file");
+  if (csvFile) csvFile.addEventListener("change", (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const ta = document.getElementById("myteam-csv-input");
+      if (ta) ta.value = String(reader.result || "");
+    };
+    reader.readAsText(file);
+  });
 }
 
 function initLeader() {
@@ -3710,6 +4849,976 @@ function initLeader() {
     if (bootstrapData) runLeader();
   });
 }
+
+// ===================== H2H LEAGUE =====================
+
+let h2hTab = "standings";
+let h2hLeagueId = null;
+let h2hData = null;
+let h2hMatches = [];
+let h2hPicksCache = {};
+let h2hLiveCache = {};
+const H2H_CACHE_KEY = "fpl_h2h_archive";
+const H2H_CACHE_VERSION = 1;
+
+function initH2H() {
+  document.getElementById("h2h-run").addEventListener("click", () => {
+    if (bootstrapData) runH2H();
+  });
+  document.getElementById("h2h-tabs").addEventListener("click", (e) => {
+    const tab = e.target.closest(".tab");
+    if (!tab) return;
+    document.querySelectorAll("#h2h-tabs .tab").forEach(t => t.classList.remove("active"));
+    tab.classList.add("active");
+    h2hTab = tab.dataset.tab;
+    if (h2hData) renderH2HTab();
+  });
+}
+
+function h2hLSKey(leagueId, gw) { return `${H2H_CACHE_KEY}_${leagueId}_gw${gw}`; }
+
+function archiveH2HData(leagueId, gw, standingsSnapshot, matchesSnapshot) {
+  try {
+    const key = h2hLSKey(leagueId, gw);
+    localStorage.setItem(key, JSON.stringify({ v: H2H_CACHE_VERSION, ts: Date.now(), standings: standingsSnapshot, matches: matchesSnapshot }));
+  } catch {}
+}
+
+function loadH2HArchive(leagueId) {
+  const archive = {};
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith(`${H2H_CACHE_KEY}_${leagueId}_gw`)) {
+      const gw = parseInt(k.split("_gw")[1]);
+      try { archive[gw] = JSON.parse(localStorage.getItem(k)); } catch {}
+    }
+  }
+  return archive;
+}
+
+async function fetchH2HStandings(leagueId) {
+  return fetchFPL(`leagues-h2h/${leagueId}/standings/`);
+}
+
+async function fetchH2HMatches(leagueId, page = 1) {
+  return fetchFPL(`leagues-h2h-matches/league/${leagueId}/?page=${page}`);
+}
+
+async function fetchH2HLive(gw) {
+  return fetchFPL(`event/${gw}/live/`);
+}
+
+async function fetchManagerPicksH2H(managerId, gw) {
+  const cacheKey = `${managerId}_${gw}`;
+  if (h2hPicksCache[cacheKey]) return h2hPicksCache[cacheKey];
+  const data = await getManagerPicks(managerId, gw);
+  h2hPicksCache[cacheKey] = data;
+  return data;
+}
+
+async function runH2H() {
+  const leagueId = document.getElementById("h2h-id").value?.trim();
+  if (!leagueId) return;
+  h2hLeagueId = leagueId;
+
+  showSection("h2h", "loading");
+  document.getElementById("h2h-table").style.display = "none";
+
+  try {
+    const standingsResp = await fetchH2HStandings(leagueId);
+    const league = standingsResp.league;
+    const standings = standingsResp.standings?.results || [];
+    if (standings.length === 0) throw new Error("Liga nie istnieje lub nie jest publiczna");
+
+    let allMatches = [];
+    let page = 1;
+    let hasMore = true;
+    while (hasMore) {
+      const pageResp = await fetchH2HMatches(leagueId, page);
+      const pageMatches = pageResp.matches_info || [];
+      allMatches = allMatches.concat(pageMatches);
+      hasMore = pageMatches.length > 0 && page < (pageResp.total_pages || 1);
+      page++;
+    }
+
+    const events = bootstrapData.events || [];
+    const finishedGWs = events.filter(e => e.finished);
+    const currentGW = events.find(e => e.is_current)?.id || 0;
+    const lastFinishedGW = finishedGWs.length > 0 ? finishedGWs[finishedGWs.length - 1].id : 0;
+
+    const managerIds = standings.map(s => s.league_entry || s.entry).filter(Boolean);
+
+    const gwsWithMatches = [...new Set(allMatches.map(m => m.event))].sort((a, b) => a - b);
+
+    const archive = loadH2HArchive(leagueId);
+    const gwSnapshots = {};
+    for (const gw of gwsWithMatches) {
+      if (archive[gw]) {
+        gwSnapshots[gw] = archive[gw];
+      }
+    }
+
+    const gwPoints = {};
+    for (const m of allMatches) {
+      const gw = m.event;
+      if (!gwPoints[gw]) gwPoints[gw] = {};
+      const entry1 = m.league_entry_1;
+      const entry2 = m.league_entry_2;
+      gwPoints[gw][entry1] = (m.team_h_score ?? 0) + (m.league_entry_1_points || 0);
+      gwPoints[gw][entry2] = (m.team_a_score ?? 0) + (m.league_entry_2_points || 0);
+    }
+
+    h2hData = {
+      league,
+      standings,
+      matches: allMatches,
+      gwsWithMatches,
+      gwPoints,
+      archive: gwSnapshots,
+      managerIds,
+      lastFinishedGW,
+      currentGW,
+    };
+
+    const lastSnapGW = Math.max(...Object.keys(h2hData.archive).map(Number), 0);
+    if (lastFinishedGW > lastSnapGW) {
+      archiveH2HData(leagueId, lastFinishedGW, standings.map(s => ({
+        id: s.league_entry || s.entry,
+        pts: s.total ?? 0,
+        rank: s.rank,
+        played: s.matches_played ?? 0,
+        won: s.matches_won ?? 0,
+        drawn: s.matches_drawn ?? 0,
+        lost: s.matches_lost ?? 0,
+        pf: s.points_for ?? 0,
+        pa: s.points_against ?? 0,
+      })), allMatches);
+    }
+
+    document.getElementById("h2h-table").style.display = "";
+    showSection("h2h", "table");
+    renderH2HTab();
+  } catch (err) {
+    showSection("h2h", "placeholder");
+    document.getElementById("h2h-placeholder").innerHTML = `<div class="placeholder-icon">⚠️</div><div style="color:var(--red)">${err.message}</div>`;
+  }
+}
+
+function renderH2HTab() {
+  if (!h2hData) return;
+  const tabRenderers = {
+    standings: renderH2HStandings,
+    expected: renderH2HExpected,
+    form: renderH2HForm,
+    charts: renderH2HCharts,
+    luck: renderH2HLuck,
+    upsets: renderH2HUpsets,
+    matchday: renderH2HMatchday,
+    headtohead: renderH2HHeadToHead,
+    fixtures: renderH2HFixtures,
+    live: renderH2HLive,
+    captains: renderH2HCaptains,
+    variance: renderH2HVariance,
+    streaks: renderH2HStreaks,
+  };
+  ["standings", "expected", "form", "charts", "luck", "upsets", "matchday", "headtohead", "fixtures", "live", "captains", "variance", "streaks"].forEach(k => {
+    const el = document.getElementById(`h2h-${k}-tab`);
+    if (el) el.style.display = k === h2hTab ? "" : "none";
+  });
+  const renderer = tabRenderers[h2hTab];
+  if (renderer) {
+    const result = renderer();
+    if (result && typeof result.then === "function") result.catch(() => {});
+  }
+}
+
+function h2hManagerName(entryId) {
+  const s = h2hData?.standings.find(x => (x.league_entry || x.entry) === entryId);
+  return s?.entry_name || s?.player_name || `Manager ${entryId}`;
+}
+
+function h2hManagerShort(entryId) {
+  const name = h2hManagerName(entryId);
+  return name.length > 14 ? name.substring(0, 12) + "…" : name;
+}
+
+// === 1. STANDINGS TABLE ===
+function renderH2HStandings() {
+  const { standings, matches, lastFinishedGW } = h2hData;
+  const lang = getLang();
+
+  const totalMatches = matches.length;
+  const totalPoints = standings.reduce((s, x) => s + (x.points_for || 0), 0);
+  const avgPts = totalMatches > 0 ? (totalPoints * 2 / totalMatches).toFixed(1) : "0";
+
+  document.getElementById("h2h-standings-summary").innerHTML = `
+    <div class="optimizer-stat-box"><div class="optimizer-stat-val">${standings.length}</div><div class="optimizer-stat-label">${lang === "pl" ? "Uczestników" : "Managers"}</div></div>
+    <div class="optimizer-stat-box"><div class="optimizer-stat-val">${totalMatches}</div><div class="optimizer-stat-label">${lang === "pl" ? "Meczów rozegranych" : "Matches played"}</div></div>
+    <div class="optimizer-stat-box"><div class="optimizer-stat-val">${avgPts}</div><div class="optimizer-stat-label">${lang === "pl" ? "Śr. pkt FPL/zawodnika" : "Avg FPL pts/player"}</div></div>
+    <div class="optimizer-stat-box"><div class="optimizer-stat-val">GW${lastFinishedGW}</div><div class="optimizer-stat-label">${lang === "pl" ? "Ostatnia kolejka" : "Last GW"}</div></div>`;
+
+  const tbody = document.getElementById("h2h-standings-body");
+  const sorted = [...standings].sort((a, b) => (b.total ?? 0) - (a.total ?? 0) || ((b.points_for ?? 0) - (b.points_against ?? 0)) - ((a.points_for ?? 0) - (a.points_against ?? 0)));
+  tbody.innerHTML = sorted.map((s, i) => {
+    const entry = s.league_entry || s.entry;
+    const pf = s.points_for ?? 0;
+    const pa = s.points_against ?? 0;
+    const diff = pf - pa;
+    const diffColor = diff > 0 ? "var(--green)" : diff < 0 ? "var(--red)" : "var(--text-dim)";
+    return `<tr>
+      <td class="rank-num">${i + 1}</td>
+      <td style="font-weight:600">${s.entry_name || "?"}</td>
+      <td class="stat-val">${s.matches_played ?? 0}</td>
+      <td class="stat-val" style="color:var(--green)">${s.matches_won ?? 0}</td>
+      <td class="stat-val" style="color:var(--yellow)">${s.matches_drawn ?? 0}</td>
+      <td class="stat-val" style="color:var(--red)">${s.matches_lost ?? 0}</td>
+      <td class="stat-val">${pf}</td>
+      <td class="stat-val">${pa}</td>
+      <td class="stat-val" style="color:${diffColor};font-weight:700">${diff > 0 ? "+" : ""}${diff}</td>
+      <td class="stat-val" style="font-weight:700;color:var(--accent);font-size:1.05rem">${s.total ?? 0}</td>
+    </tr>`;
+  }).join("");
+}
+
+// === 2. EXPECTED TABLE ===
+function renderH2HExpected() {
+  const { standings, gwPoints, gwsWithMatches, lastFinishedGW } = h2hData;
+  const lang = getLang();
+
+  const expected = standings.map(s => {
+    const entry = s.league_entry || s.entry;
+    let totalFPL = 0;
+    let gwCount = 0;
+    let bestGW = 0;
+    let worstGW = 999;
+    for (const gw of gwsWithMatches) {
+      const pts = h2hData.gwPoints[gw]?.[entry] || 0;
+      totalFPL += pts;
+      gwCount++;
+      if (pts > bestGW) bestGW = pts;
+      if (pts < worstGW && pts > 0) worstGW = pts;
+    }
+    return {
+      ...s,
+      entry,
+      totalFPL,
+      avgFPL: gwCount > 0 ? (totalFPL / gwCount).toFixed(1) : "0",
+      bestGW,
+      worstGW: worstGW === 999 ? 0 : worstGW,
+      ladderRank: standings.indexOf(s) + 1,
+    };
+  }).sort((a, b) => b.totalFPL - a.totalFPL);
+
+  expected.forEach((e, i) => { e.expectedRank = i + 1; });
+
+  const tbody = document.getElementById("h2h-expected-body");
+  tbody.innerHTML = expected.map((e, i) => {
+    const rankDiff = e.ladderRank - e.expectedRank;
+    const diffColor = rankDiff > 0 ? "var(--green)" : rankDiff < 0 ? "var(--red)" : "var(--text-dim)";
+    const diffText = rankDiff > 0 ? `▲${rankDiff}` : rankDiff < 0 ? `▼${Math.abs(rankDiff)}` : "—";
+    return `<tr>
+      <td class="rank-num">${i + 1}</td>
+      <td style="font-weight:600">${e.entry_name || "?"}</td>
+      <td class="stat-val" style="font-weight:700;color:var(--accent)">${e.totalFPL}</td>
+      <td class="stat-val">${e.avgFPL}</td>
+      <td class="stat-val" style="color:var(--green)">${e.bestGW}</td>
+      <td class="stat-val" style="color:var(--red)">${e.worstGW}</td>
+      <td class="stat-val" style="color:${diffColor};font-weight:600">${diffText}</td>
+    </tr>`;
+  }).join("");
+}
+
+// === 3. FORM ===
+function renderH2HForm() {
+  const { matches, standings } = h2hData;
+  const lang = getLang();
+  const container = document.getElementById("h2h-form-cards");
+
+  const formMap = {};
+  for (const s of standings) {
+    const entry = s.league_entry || s.entry;
+    formMap[entry] = [];
+  }
+
+  const sortedMatches = [...matches].sort((a, b) => (a.event || 0) - (b.event || 0));
+  for (const m of sortedMatches) {
+    const e1 = m.league_entry_1;
+    const e2 = m.league_entry_2;
+    const s1 = m.team_h_score ?? 0;
+    const s2 = m.team_a_score ?? 0;
+    const pts1 = m.league_entry_1_points ?? 0;
+    const pts2 = m.league_entry_2_points ?? 0;
+    if (formMap[e1]) {
+      if (pts1 > pts2) formMap[e1].push("W");
+      else if (pts1 < pts2) formMap[e1].push("L");
+      else formMap[e1].push("D");
+    }
+    if (formMap[e2]) {
+      if (pts2 > pts1) formMap[e2].push("W");
+      else if (pts2 < pts1) formMap[e2].push("L");
+      else formMap[e2].push("D");
+    }
+  }
+
+  const formColors = { W: "var(--green)", D: "var(--yellow)", L: "var(--red)" };
+  container.innerHTML = standings.map(s => {
+    const entry = s.league_entry || s.entry;
+    const form = formMap[entry] || [];
+    const last5 = form.slice(-5);
+    const formBadges = last5.map(f => `<span style="display:inline-block;width:24px;height:24px;line-height:24px;text-align:center;border-radius:4px;font-weight:700;font-size:0.75rem;color:#fff;background:${formColors[f]}">${f}</span>`).join("");
+    const wins = last5.filter(f => f === "W").length;
+    const formPts = wins * 3 + last5.filter(f => f === "D").length;
+    return `<div class="leader-card" style="min-width:200px">
+      <div style="font-weight:600;margin-bottom:6px">${s.entry_name || "?"}</div>
+      <div style="display:flex;gap:3px">${formBadges || `<span style="color:var(--text-dim);font-size:0.8rem">${lang === "pl" ? "brak danych" : "no data"}</span>`}</div>
+      <div style="font-size:0.8rem;color:var(--text-dim);margin-top:4px">${lang === "pl" ? "Ostatnie 5:" : "Last 5:"} <b style="color:var(--accent)">${formPts}</b> pkt ligowych</div>
+    </div>`;
+  }).join("");
+}
+
+// === 4. CHARTS ===
+function renderH2HCharts() {
+  renderH2HCumulativeChart();
+  renderH2HAdvantageChart();
+}
+
+function renderH2HCumulativeChart() {
+  const container = document.getElementById("h2h-chart-cumulative");
+  if (!container) return;
+  const { standings, gwsWithMatches, gwPoints } = h2hData;
+  const lang = getLang();
+
+  const managers = standings.map(s => ({ id: s.league_entry || s.entry, name: s.entry_name || "?" }));
+  const gws = gwsWithMatches;
+  if (gws.length < 2) {
+    container.innerHTML = `<div style="padding:20px;color:var(--text-dim);text-align:center">${lang === "pl" ? "Za mało kolejek do wykresu" : "Not enough GWs for chart"}</div>`;
+    return;
+  }
+
+  const svgW = 700;
+  const svgH = 350;
+  const pad = { top: 20, right: 130, bottom: 40, left: 50 };
+  const chartW = svgW - pad.left - pad.right;
+  const chartH = svgH - pad.top - pad.bottom;
+
+  const cumulative = {};
+  for (const m of managers) {
+    cumulative[m.id] = [];
+    let total = 0;
+    for (const gw of gws) {
+      total += h2hData.gwPoints[gw]?.[m.id] || 0;
+      cumulative[m.id].push(total);
+    }
+  }
+
+  const allVals = Object.values(cumulative).flat();
+  const maxVal = Math.max(...allVals, 1);
+  const minVal = Math.min(...allVals, 0);
+  const range = maxVal - minVal || 1;
+
+  const colors = ["#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#8b5cf6", "#ec4899", "#06b6d4", "#f97316", "#10b981", "#6366f1", "#14b8a6", "#e11d48", "#84cc16", "#a855f7", "#f43f5e", "#0ea5e9", "#eab308", "#d946ef", "#fb923c", "#2dd4bf"];
+
+  let yTicks = "";
+  const ySteps = 5;
+  for (let i = 0; i <= ySteps; i++) {
+    const val = minVal + (range / ySteps) * i;
+    const y = pad.top + chartH - (chartH / ySteps) * i;
+    yTicks += `<text class="chart-label" x="${pad.left - 6}" y="${y + 3}" text-anchor="end" font-size="10">${Math.round(val)}</text>`;
+    if (i > 0) yTicks += `<line class="chart-grid" x1="${pad.left}" y1="${y}" x2="${pad.left + chartW}" y2="${y}"/>`;
+  }
+
+  let xLabels = "";
+  for (let i = 0; i < gws.length; i++) {
+    const x = pad.left + (i / (gws.length - 1)) * chartW;
+    if (i % Math.max(1, Math.floor(gws.length / 8)) === 0 || i === gws.length - 1) {
+      xLabels += `<text class="chart-label" x="${x}" y="${pad.top + chartH + 18}" text-anchor="middle" font-size="10">GW${gws[i]}</text>`;
+    }
+  }
+
+  let lines = "";
+  let legend = "";
+  managers.forEach((m, idx) => {
+    const pts = cumulative[m.id] || [];
+    const color = colors[idx % colors.length];
+    let path = "";
+    pts.forEach((v, i) => {
+      const x = pad.left + (i / (gws.length - 1)) * chartW;
+      const y = pad.top + chartH - ((v - minVal) / range) * chartH;
+      path += (i === 0 ? "M" : " L") + ` ${x} ${y}`;
+    });
+    lines += `<path d="${path}" fill="none" stroke="${color}" stroke-width="2" opacity="0.85"/>`;
+    const ly = pad.top + 14 + idx * 16;
+    const lastVal = pts[pts.length - 1] || 0;
+    legend += `<text x="${pad.left + chartW + 8}" y="${ly}" font-size="9" fill="${color}" font-weight="600">${h2hManagerShort(m.id)} (${lastVal})</text>`;
+  });
+
+  container.innerHTML = `<svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg">
+    <line class="chart-axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + chartH}"/>
+    <line class="chart-axis" x1="${pad.left}" y1="${pad.top + chartH}" x2="${pad.left + chartW}" y2="${pad.top + chartH}"/>
+    ${yTicks}${xLabels}${lines}${legend}
+  </svg>`;
+}
+
+function renderH2HAdvantageChart() {
+  const container = document.getElementById("h2h-chart-advantage");
+  if (!container) return;
+  const { standings, matches, gwsWithMatches } = h2hData;
+  const lang = getLang();
+  const managers = standings.map(s => ({ id: s.league_entry || s.entry, name: s.entry_name || "?" }));
+
+  if (gwsWithMatches.length < 2) {
+    container.innerHTML = `<div style="padding:20px;color:var(--text-dim);text-align:center">${lang === "pl" ? "Za mało kolejek" : "Not enough GWs"}</div>`;
+    return;
+  }
+
+  const svgW = 700;
+  const svgH = 350;
+  const pad = { top: 20, right: 130, bottom: 40, left: 50 };
+  const chartW = svgW - pad.left - pad.right;
+  const chartH = svgH - pad.top - pad.bottom;
+
+  const margins = {};
+  for (const m of managers) margins[m.id] = [];
+  const sortedM = [...matches].sort((a, b) => (a.event || 0) - (b.event || 0));
+  for (const m of sortedM) {
+    const e1 = m.league_entry_1;
+    const e2 = m.league_entry_2;
+    const s1 = m.team_h_score ?? 0;
+    const s2 = m.team_a_score ?? 0;
+    const pts1 = m.league_entry_1_points ?? 0;
+    const pts2 = m.league_entry_2_points ?? 0;
+    if (margins[e1]) margins[e1].push(pts1 - pts2);
+    if (margins[e2]) margins[e2].push(pts2 - pts1);
+  }
+
+  const cumulativeMargins = {};
+  for (const m of managers) {
+    cumulativeMargins[m.id] = [];
+    let total = 0;
+    for (const v of (margins[m.id] || [])) {
+      total += v;
+      cumulativeMargins[m.id].push(total);
+    }
+  }
+
+  const allVals = Object.values(cumulativeMargins).flat();
+  const maxVal = Math.max(...allVals, 1);
+  const minVal = Math.min(...allVals, -1);
+  const range = maxVal - minVal || 1;
+
+  const colors = ["#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#8b5cf6", "#ec4899", "#06b6d4", "#f97316", "#10b981", "#6366f1", "#14b8a6", "#e11d48", "#84cc16", "#a855f7", "#f43f5e", "#0ea5e9", "#eab308", "#d946ef", "#fb923c", "#2dd4bf"];
+
+  let yTicks = "";
+  const ySteps = 5;
+  for (let i = 0; i <= ySteps; i++) {
+    const val = minVal + (range / ySteps) * i;
+    const y = pad.top + chartH - (chartH / ySteps) * i;
+    yTicks += `<text class="chart-label" x="${pad.left - 6}" y="${y + 3}" text-anchor="end" font-size="10">${Math.round(val)}</text>`;
+    if (i > 0) yTicks += `<line class="chart-grid" x1="${pad.left}" y1="${y}" x2="${pad.left + chartW}" y2="${y}"/>`;
+  }
+
+  const maxLen = Math.max(...managers.map(m => (cumulativeMargins[m.id] || []).length), 1);
+  let lines = "";
+  let legend = "";
+  managers.forEach((m, idx) => {
+    const pts = cumulativeMargins[m.id] || [];
+    const color = colors[idx % colors.length];
+    let path = "";
+    pts.forEach((v, i) => {
+      const x = pad.left + (i / (maxLen - 1)) * chartW;
+      const y = pad.top + chartH - ((v - minVal) / range) * chartH;
+      path += (i === 0 ? "M" : " L") + ` ${x} ${y}`;
+    });
+    lines += `<path d="${path}" fill="none" stroke="${color}" stroke-width="2" opacity="0.85"/>`;
+    const ly = pad.top + 14 + idx * 16;
+    legend += `<text x="${pad.left + chartW + 8}" y="${ly}" font-size="9" fill="${color}" font-weight="600">${h2hManagerShort(m.id)}</text>`;
+  });
+
+  const zeroY = pad.top + chartH - ((0 - minVal) / range) * chartH;
+
+  container.innerHTML = `<svg class="chart-svg" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg">
+    <line class="chart-axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top + chartH}"/>
+    <line class="chart-axis" x1="${pad.left}" y1="${pad.top + chartH}" x2="${pad.left + chartW}" y2="${pad.top + chartH}"/>
+    <line x1="${pad.left}" y1="${zeroY}" x2="${pad.left + chartW}" y2="${zeroY}" stroke="#555" stroke-width="1" stroke-dasharray="4 3"/>
+    ${yTicks}${lines}${legend}
+  </svg>`;
+}
+
+// === 5. LUCK LEAGUE ===
+function renderH2HLuck() {
+  const { standings, matches } = h2hData;
+  const lang = getLang();
+
+  const luckData = standings.map(s => {
+    const entry = s.league_entry || s.entry;
+    const wins = [];
+    for (const m of matches) {
+      const isE1 = m.league_entry_1 === entry;
+      const isE2 = m.league_entry_2 === entry;
+      if (!isE1 && !isE2) continue;
+      const myPts = isE1 ? (m.league_entry_1_points ?? 0) : (m.league_entry_2_points ?? 0);
+      const oppPts = isE1 ? (m.league_entry_2_points ?? 0) : (m.league_entry_1_points ?? 0);
+      if (myPts > oppPts) wins.push(myPts - oppPts);
+    }
+    const avgMargin = wins.length > 0 ? (wins.reduce((a, b) => a + b, 0) / wins.length) : 999;
+    const closestWin = wins.length > 0 ? Math.min(...wins) : 999;
+    const luckScore = wins.length > 0 ? (1 / (avgMargin + 1)) * 100 : 0;
+    return { ...s, entry, wins: wins.length, avgMargin, closestWin, luckScore };
+  }).sort((a, b) => b.luckScore - a.luckScore);
+
+  const tbody = document.getElementById("h2h-luck-body");
+  tbody.innerHTML = luckData.map((l, i) => {
+    const avgColor = l.avgMargin <= 5 ? "var(--green)" : l.avgMargin <= 15 ? "var(--yellow)" : "var(--text-dim)";
+    return `<tr>
+      <td class="rank-num">${i + 1}</td>
+      <td style="font-weight:600">${l.entry_name || "?"}</td>
+      <td class="stat-val">${l.wins}</td>
+      <td class="stat-val" style="color:${avgColor}">${l.avgMargin < 999 ? l.avgMargin.toFixed(1) : "—"}</td>
+      <td class="stat-val" style="color:var(--green)">${l.closestWin < 999 ? l.closestWin : "—"}</td>
+      <td class="stat-val" style="font-weight:700;color:var(--accent)">${l.luckScore.toFixed(1)}</td>
+    </tr>`;
+  }).join("");
+}
+
+// === 6. UPSETS ===
+function renderH2HUpsets() {
+  const { standings, matches } = h2hData;
+  const lang = getLang();
+
+  const totalPts = {};
+  for (const s of standings) {
+    const entry = s.league_entry || s.entry;
+    totalPts[entry] = s.total ?? 0;
+  }
+
+  const upsets = [];
+  for (const m of matches) {
+    const e1 = m.league_entry_1;
+    const e2 = m.league_entry_2;
+    const pts1 = m.league_entry_1_points ?? 0;
+    const pts2 = m.league_entry_2_points ?? 0;
+    if (pts1 === pts2) continue;
+
+    const rank1 = standings.findIndex(s => (s.league_entry || s.entry) === e1);
+    const rank2 = standings.findIndex(s => (s.league_entry || s.entry) === e2);
+    const winner = pts1 > pts2 ? e1 : e2;
+    const loser = pts1 > pts2 ? e2 : e1;
+    const winnerRank = pts1 > pts2 ? rank1 : rank2;
+    const loserRank = pts1 > pts2 ? rank2 : rank1;
+
+    if (winnerRank > loserRank) {
+      const size = winnerRank - loserRank;
+      upsets.push({ gw: m.event, winner, loser, score: `${pts1} - ${pts2}`, size });
+    }
+  }
+
+  upsets.sort((a, b) => b.size - a.size);
+  const tbody = document.getElementById("h2h-upsets-body");
+  tbody.innerHTML = upsets.slice(0, 20).map(u => {
+    const sizeColor = u.size >= 5 ? "var(--red)" : u.size >= 3 ? "var(--yellow)" : "var(--text-dim)";
+    return `<tr>
+      <td style="font-weight:600">GW${u.gw}</td>
+      <td style="font-weight:600;color:var(--green)">${h2hManagerName(u.winner)}</td>
+      <td style="color:var(--red)">${h2hManagerName(u.loser)}</td>
+      <td class="stat-val">${u.score}</td>
+      <td class="stat-val" style="color:${sizeColor};font-weight:700">${lang === "pl" ? `▲${u.size} miejsc` : `▲${u.size} spots`}</td>
+    </tr>`;
+  }).join("");
+}
+
+// === 7. MATCH OF THE GW ===
+function renderH2HMatchday() {
+  const { matches, gwsWithMatches } = h2hData;
+  const lang = getLang();
+  const container = document.getElementById("h2h-matchday-cards");
+
+  const gwBest = [];
+  for (const gw of gwsWithMatches) {
+    const gwMatches = matches.filter(m => m.event === gw);
+    let best = null;
+    let bestTotal = -1;
+    for (const m of gwMatches) {
+      const total = (m.team_h_score ?? 0) + (m.team_a_score ?? 0);
+      if (total > bestTotal) { bestTotal = total; best = m; }
+    }
+    if (best) gwBest.push({ gw, match: best, total: bestTotal });
+  }
+
+  container.innerHTML = gwBest.map(g => {
+    const e1 = g.match.league_entry_1;
+    const e2 = g.match.league_entry_2;
+    const pts1 = g.match.team_h_score ?? 0;
+    const pts2 = g.match.team_a_score ?? 0;
+    const barMax = Math.max(pts1, pts2, 1);
+    return `<div style="margin-bottom:12px;padding:10px;background:var(--bg);border-radius:8px">
+      <div style="font-weight:600;color:var(--accent);margin-bottom:6px">GW${g.ww} — ${lang === "pl" ? "Mecz kolejki" : "Match of the GW"} (${g.total} ${lang === "pl" ? "pkt łącznie" : "total pts"})</div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="flex:1;text-align:right;font-weight:600">${h2hManagerShort(e1)}</div>
+        <div style="flex:3;display:flex;align-items:center;gap:6px">
+          <div style="flex:1;height:20px;background:var(--bg-alt);border-radius:4px;overflow:hidden;display:flex;justify-content:flex-end"><div style="width:${(pts1 / barMax) * 100}%;height:100%;background:var(--accent);border-radius:4px"></div></div>
+          <div style="min-width:30px;text-align:center;font-weight:700">${pts1} - ${pts2}</div>
+          <div style="flex:1;height:20px;background:var(--bg-alt);border-radius:4px;overflow:hidden"><div style="width:${(pts2 / barMax) * 100}%;height:100%;background:var(--red);border-radius:4px"></div></div>
+        </div>
+        <div style="flex:1;font-weight:600">${h2hManagerShort(e2)}</div>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+// === 8. HEAD-TO-HEAD HISTORY ===
+function renderH2HHeadToHead() {
+  const { matches } = h2hData;
+  const lang = getLang();
+  const container = document.getElementById("h2h-headtohead-content");
+
+  const pairMap = {};
+  for (const m of matches) {
+    const e1 = m.league_entry_1;
+    const e2 = m.league_entry_2;
+    const key = [Math.min(e1, e2), Math.max(e1, e2)].join("-");
+    if (!pairMap[key]) pairMap[key] = { e1, e2, results: [] };
+    pairMap[key].results.push({
+      gw: m.event,
+      pts1: m.league_entry_1_points ?? 0,
+      pts2: m.league_entry_2_points ?? 0,
+    });
+  }
+
+  const multiPairs = Object.values(pairMap).filter(p => p.results.length > 1).sort((a, b) => b.results.length - a.results.length);
+
+  if (multiPairs.length === 0) {
+    container.innerHTML = `<div style="color:var(--text-dim);text-align:center;padding:20px">${lang === "pl" ? "Brak par, które grały ze sobą więcej niż raz" : "No pairs played each other more than once yet"}</div>`;
+    return;
+  }
+
+  container.innerHTML = `<table><thead><tr>
+    <th>${lang === "pl" ? "Zawodnicy" : "Players"}</th>
+    <th>${lang === "pl" ? "Mecze" : "Matches"}</th>
+    <th>${lang === "pl" ? "Bilans" : "Record"}</th>
+    <th>${lang === "pl" ? "Szczegóły" : "Details"}</th>
+  </tr></thead><tbody>
+  ${multiPairs.map(p => {
+    let w1 = 0, w2 = 0, d = 0;
+    const details = p.results.map(r => {
+      if (r.pts1 > r.pts2) w1++;
+      else if (r.pts2 > r.pts1) w2++;
+      else d++;
+      return `GW${r.gw}: ${r.pts1}-${r.pts2}`;
+    });
+    return `<tr>
+      <td style="font-weight:600">${h2hManagerShort(p.e1)} vs ${h2hManagerShort(p.e2)}</td>
+      <td class="stat-val">${p.results.length}</td>
+      <td class="stat-val" style="font-weight:700">${w1} - ${d} - ${w2}</td>
+      <td style="font-size:0.8rem;color:var(--text-dim)">${details.join(", ")}</td>
+    </tr>`;
+  }).join("")}
+  </tbody></table>`;
+}
+
+// === 9. FIXTURES ===
+function renderH2HFixtures() {
+  const { standings, gwsWithMatches, matches } = h2hData;
+  const lang = getLang();
+  const container = document.getElementById("h2h-fixtures-content");
+
+  const events = bootstrapData.events || [];
+  const allGWs = events.map(e => e.id).sort((a, b) => a - b);
+  const playedGWs = new Set(matches.map(m => m.event));
+
+  const matchByGW = {};
+  for (const m of matches) {
+    if (!matchByGW[m.event]) matchByGW[m.event] = [];
+    matchByGW[m.event].push(m);
+  }
+
+  const upcomingGWs = allGWs.filter(gw => !playedGWs.has(gw)).slice(0, 5);
+  const recentGWs = allGWs.filter(gw => playedGWs.has(gw)).slice(-3);
+
+  let html = "";
+
+  if (recentGWs.length > 0) {
+    html += `<h3 style="margin-bottom:8px;color:var(--text-dim)">${lang === "pl" ? "Ostatnie kolejki" : "Recent GWs"}</h3>`;
+    for (const gw of recentGWs) {
+      const gwMatches = matchByGW[gw] || [];
+      html += `<div style="margin-bottom:12px"><div style="font-weight:600;margin-bottom:4px">GW${gw}</div>`;
+      for (const m of gwMatches) {
+        const pts1 = m.team_h_score ?? 0;
+        const pts2 = m.team_a_score ?? 0;
+        const w1 = pts1 > pts2 ? "font-weight:700;color:var(--green)" : pts1 < pts2 ? "color:var(--text-dim)" : "color:var(--yellow)";
+        const w2 = pts2 > pts1 ? "font-weight:700;color:var(--green)" : pts2 < pts1 ? "color:var(--text-dim)" : "color:var(--yellow)";
+        html += `<div style="padding:4px 8px;font-size:0.85rem;display:flex;gap:8px;align-items:center">
+          <span style="${w1}">${h2hManagerShort(m.league_entry_1)}</span>
+          <span style="font-weight:700">${pts1} - ${pts2}</span>
+          <span style="${w2}">${h2hManagerShort(m.league_entry_2)}</span>
+        </div>`;
+      }
+      html += `</div>`;
+    }
+  }
+
+  if (upcomingGWs.length > 0) {
+    html += `<h3 style="margin:12px 0 8px;color:var(--accent)">${lang === "pl" ? "Nadchodzące kolejki" : "Upcoming GWs"}</h3>`;
+    for (const gw of upcomingGWs) {
+      const gwMatches = matchByGW[gw] || [];
+      if (gwMatches.length === 0) {
+        html += `<div style="padding:4px 8px;font-size:0.85rem;color:var(--text-dim)">GW${gw}: ${lang === "pl" ? "brak przypisanych meczów" : "no matches assigned"}</div>`;
+      } else {
+        html += `<div style="margin-bottom:8px"><div style="font-weight:600;margin-bottom:4px">GW${gw}</div>`;
+        for (const m of gwMatches) {
+          html += `<div style="padding:4px 8px;font-size:0.85rem">${h2hManagerShort(m.league_entry_1)} vs ${h2hManagerShort(m.league_entry_2)}</div>`;
+        }
+        html += `</div>`;
+      }
+    }
+  }
+
+  container.innerHTML = html || `<div style="color:var(--text-dim);text-align:center;padding:20px">${lang === "pl" ? "Brak danych o terminarzu" : "No fixture data"}</div>`;
+}
+
+// === 10. LIVE TRACKER ===
+function renderH2HLive() {
+  const { standings, currentGW, gwsWithMatches, matches } = h2hData;
+  const lang = getLang();
+  const container = document.getElementById("h2h-live-content");
+
+  if (!currentGW || currentGW === 0) {
+    container.innerHTML = `<div style="color:var(--text-dim);text-align:center;padding:20px">${lang === "pl" ? "Brak trwającej kolejki" : "No active gameweek"}</div>`;
+    return;
+  }
+
+  const liveMatches = matches.filter(m => m.event === currentGW);
+  if (liveMatches.length === 0) {
+    container.innerHTML = `<div style="color:var(--text-dim);text-align:center;padding:20px">${lang === "pl" ? `Brak meczów H2H w GW${currentGW}` : `No H2H matches in GW${currentGW}`}</div>`;
+    return;
+  }
+
+  container.innerHTML = `<div style="margin-bottom:8px;font-weight:600;color:var(--accent)">GW${currentGW} — ${lang === "pl" ? "Na żywo" : "Live"}</div>` +
+    liveMatches.map(m => {
+      const pts1 = m.team_h_score ?? 0;
+      const pts2 = m.team_a_score ?? 0;
+      const leader1 = pts1 > pts2;
+      const leader2 = pts2 > pts1;
+      const draw = pts1 === pts2 && pts1 > 0;
+      return `<div style="padding:8px 12px;margin-bottom:6px;background:var(--bg);border-radius:8px;display:flex;align-items:center;justify-content:space-between">
+        <span style="font-weight:600;${leader1 ? 'color:var(--green)' : ''}">${h2hManagerShort(m.league_entry_1)}</span>
+        <span style="font-size:1.1rem;font-weight:700;color:var(--accent)">${pts1} - ${pts2}</span>
+        <span style="font-weight:600;${leader2 ? 'color:var(--green)' : ''}">${h2hManagerShort(m.league_entry_2)}</span>
+      </div>`;
+    }).join("");
+}
+
+// === 11. CAPTAINS H2H ===
+async function renderH2HCaptains() {
+  const { matches, gwsWithMatches } = h2hData;
+  const lang = getLang();
+  const tbody = document.getElementById("h2h-captains-body");
+  const sortedM = [...matches].sort((a, b) => (a.event || 0) - (b.event || 0));
+
+  const rows = [];
+  for (const m of sortedM) {
+    const e1 = m.league_entry_1;
+    const e2 = m.league_entry_2;
+    const gw = m.event;
+
+    let cap1Name = "?", cap1Pts = 0, cap2Name = "?", cap2Pts = 0;
+    try {
+      const picks1 = await fetchManagerPicksH2H(e1, gw);
+      const picks2 = await fetchManagerPicksH2H(e2, gw);
+      const cap1 = (picks1.picks || []).find(p => p.is_captain);
+      const cap2 = (picks2.picks || []).find(p => p.is_captain);
+      if (cap1) {
+        const p1 = bootstrapData.elements.find(p => p.id === cap1.element);
+        cap1Name = p1?.web_name || "?";
+        cap1Pts = (picks1.entry_history?.points || 0);
+      }
+      if (cap2) {
+        const p2 = bootstrapData.elements.find(p => p.id === cap2.element);
+        cap2Name = p2?.web_name || "?";
+        cap2Pts = (picks2.entry_history?.points || 0);
+      }
+    } catch {}
+
+    const winner = cap1Pts > cap2Pts ? h2hManagerShort(e1) : cap2Pts > cap1Pts ? h2hManagerShort(e2) : "—";
+    const winnerColor = cap1Pts > cap2Pts ? "var(--green)" : cap2Pts > cap1Pts ? "var(--green)" : "var(--yellow)";
+
+    rows.push(`<tr>
+      <td style="font-weight:600">GW${gw}</td>
+      <td>${h2hManagerShort(e1)} vs ${h2hManagerShort(e2)}</td>
+      <td>${cap1Name}</td>
+      <td class="stat-val">${cap1Pts}</td>
+      <td>${cap2Name}</td>
+      <td class="stat-val">${cap2Pts}</td>
+      <td style="color:${winnerColor};font-weight:600">${winner}</td>
+    </tr>`);
+  }
+
+  tbody.innerHTML = rows.join("");
+}
+
+// === 12. VARIANCE ===
+function renderH2HVariance() {
+  const { standings, gwsWithMatches, gwPoints } = h2hData;
+  const lang = getLang();
+
+  const variance = standings.map(s => {
+    const entry = s.league_entry || s.entry;
+    const positions = [];
+    const sortedGWs = [...gwsWithMatches].sort((a, b) => a - b);
+    for (const gw of sortedGWs) {
+      const gwMatch = h2hData.matches.filter(m => m.event === gw);
+      const gwStandings = standings.map(st => ({
+        id: st.league_entry || st.entry,
+        pts: h2hData.gwPoints[gw]?.[st.league_entry || st.entry] || 0,
+      }));
+      gwStandings.sort((a, b) => b.pts - a.pts);
+      const pos = gwStandings.findIndex(x => x.id === entry) + 1;
+      positions.push(pos);
+    }
+
+    let maxJump = 0, maxDrop = 0, totalChange = 0;
+    for (let i = 1; i < positions.length; i++) {
+      const diff = positions[i - 1] - positions[i];
+      if (diff > maxJump) maxJump = diff;
+      if (diff < maxDrop) maxDrop = diff;
+      totalChange += Math.abs(diff);
+    }
+    const avgChange = positions.length > 1 ? (totalChange / (positions.length - 1)).toFixed(1) : "0";
+    const stability = positions.length > 1 ? (100 / (parseFloat(avgChange) + 1)).toFixed(0) : "100";
+
+    return { ...s, entry, maxJump, maxDrop: Math.abs(maxDrop), avgChange: parseFloat(avgChange), stability: parseFloat(stability) };
+  }).sort((a, b) => b.avgChange - a.avgChange);
+
+  const tbody = document.getElementById("h2h-variance-body");
+  tbody.innerHTML = variance.map((v, i) => {
+    const stabColor = v.stability >= 80 ? "var(--green)" : v.stability >= 50 ? "var(--yellow)" : "var(--red)";
+    return `<tr>
+      <td class="rank-num">${i + 1}</td>
+      <td style="font-weight:600">${v.entry_name || "?"}</td>
+      <td class="stat-val" style="color:var(--green)">▲${v.maxJump}</td>
+      <td class="stat-val" style="color:var(--red)">▼${v.maxDrop}</td>
+      <td class="stat-val">${v.avgChange}</td>
+      <td class="stat-val" style="color:${stabColor};font-weight:700">${v.stability}%</td>
+    </tr>`;
+  }).join("");
+}
+
+// === 13. STREAKS ===
+function renderH2HStreaks() {
+  const { standings, matches, gwsWithMatches } = h2hData;
+  const lang = getLang();
+  const container = document.getElementById("h2h-streaks-content");
+
+  const sortedM = [...matches].sort((a, b) => (a.event || 0) - (b.event || 0));
+  const entryResults = {};
+  for (const s of standings) {
+    const entry = s.league_entry || s.entry;
+    entryResults[entry] = [];
+  }
+
+  for (const m of sortedM) {
+    const e1 = m.league_entry_1;
+    const e2 = m.league_entry_2;
+    const pts1 = m.league_entry_1_points ?? 0;
+    const pts2 = m.league_entry_2_points ?? 0;
+    if (entryResults[e1]) entryResults[e1].push(pts1 > pts2 ? "W" : pts1 < pts2 ? "L" : "D");
+    if (entryResults[e2]) entryResults[e2].push(pts2 > pts1 ? "W" : pts2 < pts1 ? "L" : "D");
+  }
+
+  function longestStreak(arr, val) {
+    let max = 0, cur = 0;
+    for (const v of arr) {
+      if (v === val) { cur++; if (cur > max) max = cur; }
+      else cur = 0;
+    }
+    return max;
+  }
+
+  function longestAtFirst(entryId) {
+    const sortedGWs = [...gwsWithMatches].sort((a, b) => a - b);
+    let max = 0, cur = 0;
+    for (const gw of sortedGWs) {
+      const gwStandings = standings.map(s => ({
+        id: s.league_entry || s.entry,
+        pts: h2hData.gwPoints[gw]?.[s.league_entry || s.entry] || 0,
+      }));
+      gwStandings.sort((a, b) => b.pts - a.pts);
+      if (gwStandings[0]?.id === entryId) { cur++; if (cur > max) max = cur; }
+      else cur = 0;
+    }
+    return max;
+  }
+
+  const streaks = standings.map(s => {
+    const entry = s.league_entry || s.entry;
+    const results = entryResults[entry] || [];
+    return {
+      ...s, entry,
+      longestWin: longestStreak(results, "W"),
+      longestLoss: longestStreak(results, "L"),
+      longestTop1: longestAtFirst(entry),
+    };
+  }).sort((a, b) => b.longestWin - a.longestWin);
+
+  container.innerHTML = `
+    <h3 style="color:var(--green);margin-bottom:8px">${lang === "pl" ? "Najdłuższa passa zwycięstw" : "Longest win streak"}</h3>
+    <table><thead><tr>
+      <th>#</th><th>${lang === "pl" ? "Zawodnik" : "Manager"}</th><th>${lang === "pl" ? "Seria W" : "W Streak"}</th><th>${lang === "pl" ? "Seria P" : "L Streak"}</th>
+    </tr></thead><tbody>
+    ${streaks.map((s, i) => `<tr>
+      <td class="rank-num">${i + 1}</td>
+      <td style="font-weight:600">${s.entry_name || "?"}</td>
+      <td class="stat-val" style="color:var(--green);font-weight:700">${s.longestWin}</td>
+      <td class="stat-val" style="color:var(--red)">${s.longestLoss}</td>
+    </tr>`).join("")}
+    </tbody></table>
+
+    <h3 style="color:var(--accent);margin:16px 0 8px">${lang === "pl" ? "Najdłuższy pobyt na 1. miejscu" : "Longest time at #1"}</h3>
+    <table><thead><tr>
+      <th>#</th><th>${lang === "pl" ? "Zawodnik" : "Manager"}</th><th>${lang === "pl" ? "Kolejek na 1." : "GWs at #1"}</th>
+    </tr></thead><tbody>
+    ${[...streaks].sort((a, b) => b.longestTop1 - a.longestTop1).map((s, i) => `<tr>
+      <td class="rank-num">${i + 1}</td>
+      <td style="font-weight:600">${s.entry_name || "?"}</td>
+      <td class="stat-val" style="color:var(--accent);font-weight:700">${s.longestTop1}</td>
+    </tr>`).join("")}
+    </tbody></table>`;
+}
+
+renderH2HMatchday = function() {
+  const { matches, gwsWithMatches } = h2hData;
+  const lang = getLang();
+  const container = document.getElementById("h2h-matchday-cards");
+  const gwBest = [];
+  for (const gw of gwsWithMatches) {
+    const gwMatches = matches.filter(m => m.event === gw);
+    let best = null;
+    let bestTotal = -1;
+    for (const m of gwMatches) {
+      const total = (m.team_h_score ?? 0) + (m.team_a_score ?? 0);
+      if (total > bestTotal) { bestTotal = total; best = m; }
+    }
+    if (best) gwBest.push({ gw, match: best, total: bestTotal });
+  }
+  container.innerHTML = gwBest.map(g => {
+    const e1 = g.match.league_entry_1;
+    const e2 = g.match.league_entry_2;
+    const pts1 = g.match.team_h_score ?? 0;
+    const pts2 = g.match.team_a_score ?? 0;
+    const barMax = Math.max(pts1, pts2, 1);
+    return `<div style="margin-bottom:12px;padding:10px;background:var(--bg);border-radius:8px">
+      <div style="font-weight:600;color:var(--accent);margin-bottom:6px">GW${g.gw} — ${lang === "pl" ? "Mecz kolejki" : "Match of the GW"} (${g.total} ${lang === "pl" ? "pkt łącznie" : "total pts"})</div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="flex:1;text-align:right;font-weight:600">${h2hManagerShort(e1)}</div>
+        <div style="flex:3;display:flex;align-items:center;gap:6px">
+          <div style="flex:1;height:20px;background:var(--bg-alt);border-radius:4px;overflow:hidden;display:flex;justify-content:flex-end"><div style="width:${(pts1 / barMax) * 100}%;height:100%;background:var(--accent);border-radius:4px"></div></div>
+          <div style="min-width:30px;text-align:center;font-weight:700">${pts1} - ${pts2}</div>
+          <div style="flex:1;height:20px;background:var(--bg-alt);border-radius:4px;overflow:hidden"><div style="width:${(pts2 / barMax) * 100}%;height:100%;background:var(--red);border-radius:4px"></div></div>
+        </div>
+        <div style="flex:1;font-weight:600">${h2hManagerShort(e2)}</div>
+      </div>
+    </div>`;
+  }).join("");
+};
 
 document.addEventListener("DOMContentLoaded", () => {
   initNav();
@@ -3720,7 +5829,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initTableSort("optimizer-table", optimizerSort, renderOptimizer, ["web_name", "now_cost", "total_points"]);
   initTableSort("homeaway-table", homeAwaySort, renderHomeAway, ["homeAvg", "awayAvg", "diff"]);
   initTableSort("nastart-table", naStartSort, renderNaStart, ["web_name", "team", "element_type", "now_cost", "total_points", "ptsPerCost"]);
-  initTableSort("squadbuilder-table", squadBuilderSort, renderSquadBuilder, ["web_name", "now_cost", "total_points", "avgAwayDist", "compositeScore"]);
+  initTableSort("squadbuilder-table", squadBuilderSort, renderSquadBuilder, ["web_name", "now_cost", "total_points", "epNext", "chanceNext", "xgi", "avgFDR", "avgAwayDist", "compositeScore"]);
   initOptimizer();
   initKetchup();
   initHomeAway();
@@ -3730,5 +5839,8 @@ document.addEventListener("DOMContentLoaded", () => {
   initTop15();
   initSquadBuilder();
   initStadiums();
+  initArchive();
+  initH2H();
   loadData();
+  loadAllFixtures();
 });
