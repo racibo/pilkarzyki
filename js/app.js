@@ -1759,7 +1759,6 @@ async function runMyTeam(override) {
 
   showSection("myteam", "loading");
   document.getElementById("myteam-summary-cards").style.display = "none";
-  document.getElementById("myteam-tabs").style.display = "none";
   document.getElementById("myteam-overview-tab").style.display = "none";
   const loadingEl = document.getElementById("myteam-loading");
   const lang = getLang();
@@ -1802,8 +1801,24 @@ async function runMyTeam(override) {
       const lastSeason = prevSeasonShort(detectSeason(bootstrapData));
       document.getElementById("myteam-placeholder").innerHTML = `<div class="placeholder-icon">📋</div>
         <div>${lang === "pl" ? `Brak danych dla sezonu ${phSeason}` : `No data for the ${phSeason} season`}</div>
-        <div style="color:var(--text-dim);font-size:0.85rem;margin-top:4px">${lang === "pl" ? `Sezon jeszcze się nie rozpoczął — skład będzie dostępny po starcie rozgrywek. Dane archiwalne (${lastSeason}) nie są dostępne dla tego menedżera przez API FPL.` : `The season hasn't started yet — the squad will be available once games begin. Archived data (${lastSeason}) isn't available for this manager via the FPL API.`}</div>`;
+        <div style="color:var(--text-dim);font-size:0.85rem;margin-top:4px">${lang === "pl" ? `Sezon jeszcze się nie rozpoczął — skład będzie dostępny po starcie rozgrywek. Dane archiwalne (${lastSeason}) nie są dostępne dla tego menedżera przez API FPL.` : `The season hasn't started yet — the squad will be available once games begin. Archived data (${lastSeason}) isn't available for this manager via the FPL API.`}</div>
+        <div style="color:var(--text-dim);font-size:0.85rem;margin-top:8px">${lang === "pl" ? `Zobacz zakładkę „Historia sezonów”, by przeanalizować poprzednie sezony.` : `Check the “Seasons history” tab to analyse previous seasons.`}</div>`;
       showSection("myteam", "placeholder");
+      const tabs = document.getElementById("myteam-tabs");
+      if (tabs) tabs.style.display = "";
+      try {
+        const mid = managerId || managerIdForSeason(detectSeason(bootstrapData).replace("/", "-"));
+        if (mid) {
+          document.querySelectorAll("#myteam-tabs .tab").forEach(t => t.classList.remove("active"));
+          const st = document.querySelector('#myteam-tabs .tab[data-tab="seasons"]');
+          if (st) st.classList.add("active");
+          ["overview", "reserves", "captains", "gwhistory", "seasons"].forEach(k => {
+            const el = document.getElementById(`myteam-${k}-tab`);
+            if (el) el.style.display = k === "seasons" ? "" : "none";
+          });
+          renderManagerSeasons(mid);
+        }
+      } catch {}
       return;
     }
 
