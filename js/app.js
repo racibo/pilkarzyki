@@ -1801,24 +1801,10 @@ async function runMyTeam(override) {
       const lastSeason = prevSeasonShort(detectSeason(bootstrapData));
       document.getElementById("myteam-placeholder").innerHTML = `<div class="placeholder-icon">📋</div>
         <div>${lang === "pl" ? `Brak danych dla sezonu ${phSeason}` : `No data for the ${phSeason} season`}</div>
-        <div style="color:var(--text-dim);font-size:0.85rem;margin-top:4px">${lang === "pl" ? `Sezon jeszcze się nie rozpoczął — skład będzie dostępny po starcie rozgrywek. Dane archiwalne (${lastSeason}) nie są dostępne dla tego menedżera przez API FPL.` : `The season hasn't started yet — the squad will be available once games begin. Archived data (${lastSeason}) isn't available for this manager via the FPL API.`}</div>
-        <div style="color:var(--text-dim);font-size:0.85rem;margin-top:8px">${lang === "pl" ? `Zobacz zakładkę „Historia sezonów”, by przeanalizować poprzednie sezony.` : `Check the “Seasons history” tab to analyse previous seasons.`}</div>`;
+        <div style="color:var(--text-dim);font-size:0.85rem;margin-top:4px">${lang === "pl" ? `Sezon jeszcze się nie rozpoczął — skład będzie dostępny po starcie rozgrywek.` : `The season hasn't started yet — the squad will be available once games begin.`}</div>
+        <div style="color:var(--text-dim);font-size:0.85rem;margin-top:8px">${lang === "pl" ? `Twoje wyniki z poprzednich sezonów pokazuje zakładka „Historia sezonów” (właśnie otwarta).` : `Your previous-seasons results are shown in the “Seasons history” tab (opened above).`}</div>`;
       showSection("myteam", "placeholder");
-      const tabs = document.getElementById("myteam-tabs");
-      if (tabs) tabs.style.display = "";
-      try {
-        const mid = managerId || managerIdForSeason(detectSeason(bootstrapData).replace("/", "-"));
-        if (mid) {
-          document.querySelectorAll("#myteam-tabs .tab").forEach(t => t.classList.remove("active"));
-          const st = document.querySelector('#myteam-tabs .tab[data-tab="seasons"]');
-          if (st) st.classList.add("active");
-          ["overview", "reserves", "captains", "gwhistory", "seasons"].forEach(k => {
-            const el = document.getElementById(`myteam-${k}-tab`);
-            if (el) el.style.display = k === "seasons" ? "" : "none";
-          });
-          renderManagerSeasons(mid);
-        }
-      } catch {}
+      activateMyTeamTab("seasons", { updateHash: true });
       return;
     }
 
@@ -1976,10 +1962,7 @@ async function runMyTeam(override) {
     document.getElementById("myteam-tabs").style.display = "";
     document.getElementById("myteam-loading").style.display = "none";
     showSection("myteam", "table");
-    document.getElementById("myteam-overview-tab").style.display = "";
-    ["reserves", "captains", "gwhistory"].forEach(k => {
-      document.getElementById(`myteam-${k}-tab`).style.display = "none";
-    });
+    activateMyTeamTab(getMyTeamFav() || "overview", { updateHash: true });
 
     // === REZERWOwi TAB ===
     try {
@@ -4711,10 +4694,8 @@ function initNav() {
     if (item.dataset.page === "myteam") {
       const tabs = document.getElementById("myteam-tabs");
       if (tabs) tabs.style.display = "";
-      const idEl = document.getElementById("myteam-id");
-      const mid = idEl && idEl.value ? idEl.value.trim()
-        : managerIdForSeason(detectSeason(bootstrapData).replace("/", "-"));
-      if (mid) renderManagerSeasons(mid);
+      const initial = myTeamTabFromHash() || getMyTeamFav() || "overview";
+      activateMyTeamTab(initial);
     }
   });
 }
@@ -4909,6 +4890,58 @@ function initHomeAway() {
   });
 }
 
+const MT_TABS = ["overview", "reserves", "captains", "gwhistory", "seasons"];
+const MT_FAV_KEY = "fpl_myteam_fav";
+
+function getMyTeamFav() {
+  const v = localStorage.getItem(MT_FAV_KEY);
+  return MT_TABS.includes(v) ? v : null;
+}
+function setMyTeamFav(k) {
+  if (MT_TABS.includes(k)) localStorage.setItem(MT_FAV_KEY, k);
+}
+function updateMyTeamStars() {
+  const fav = getMyTeamFav();
+  document.querySelectorAll("#myteam-tabs .tab").forEach(t => {
+    const star = t.querySelector(".tab-star");
+    if (!star) return;
+    if (t.dataset.tab === fav) { star.textContent = "★"; star.classList.add("fav"); }
+    else { star.textContent = "☆"; star.classList.remove("fav"); }
+  });
+}
+function activateMyTeamTab(key, opts = {}) {
+  if (!MT_TABS.includes(key)) key = "overview";
+  document.querySelectorAll("#myteam-tabs .tab").forEach(t => t.classList.remove("active"));
+  const tabEl = document.querySelector(`#myteam-tabs .tab[data-tab="${key}"]`);
+  if (tabEl) tabEl.classList.add("active");
+  MT_TABS.forEach(k => {
+    const el = document.getElementById(`myteam-${k}-tab`);
+    if (el) el.style.display = k === key ? "" : "none";
+  });
+  updateMyTeamStars();
+  if (opts.updateHash) {
+    try { history.replaceState(null, "", "#myteam=" + key); } catch (e) {}
+  }
+  if (key === "seasons") {
+    const idEl = document.getElementById("myteam-id");
+    const mid = (idEl && idEl.value && idEl.value.trim())
+      ? idEl.value.trim()
+      : managerIdForSeason(detectSeason(bootstrapData).replace("/", "-"));
+    if (mid) renderManagerSeasons(mid);
+  }
+}
+function toggleMyTeamFav(key) {
+  if (getMyTeamFav() === key) localStorage.removeItem(MT_FAV_KEY);
+  else setMyTeamFav(key);
+  updateMyTeamStars();
+  activateMyTeamTab(key, { updateHash: true });
+}
+function myTeamTabFromHash() {
+  const m = location.hash.match(/myteam=([a-z]+)/);
+  if (m && MT_TABS.includes(m[1])) return m[1];
+  return null;
+}
+
 function initMyTeam() {
   const idEl = document.getElementById("myteam-id");
   if (idEl && !idEl.value && bootstrapData) {
@@ -4918,22 +4951,15 @@ function initMyTeam() {
     if (bootstrapData) runMyTeam();
   });
   document.getElementById("myteam-tabs").addEventListener("click", (e) => {
+    const star = e.target.closest(".tab-star");
+    if (star) {
+      const tab = star.closest(".tab");
+      if (tab) toggleMyTeamFav(tab.dataset.tab);
+      return;
+    }
     const tab = e.target.closest(".tab");
     if (!tab) return;
-    document.querySelectorAll("#myteam-tabs .tab").forEach(t => t.classList.remove("active"));
-    tab.classList.add("active");
-    const tabKey = tab.dataset.tab;
-    ["overview", "reserves", "captains", "gwhistory", "seasons"].forEach(k => {
-      const el = document.getElementById(`myteam-${k}-tab`);
-      if (el) el.style.display = k === tabKey ? "" : "none";
-    });
-    if (tabKey === "seasons") {
-      const idEl = document.getElementById("myteam-id");
-      const mid = (idEl && idEl.value && idEl.value.trim())
-        ? idEl.value.trim()
-        : managerIdForSeason(detectSeason(bootstrapData).replace("/", "-"));
-      if (mid) renderManagerSeasons(mid);
-    }
+    activateMyTeamTab(tab.dataset.tab, { updateHash: true });
   });
   const csvRun = document.getElementById("myteam-csv-run");
   if (csvRun) csvRun.addEventListener("click", runMyTeamCSV);
@@ -5949,4 +5975,16 @@ document.addEventListener("DOMContentLoaded", () => {
   initH2H();
   loadData();
   loadAllFixtures();
+
+  window.addEventListener("hashchange", () => {
+    const t = myTeamTabFromHash();
+    if (t && document.getElementById("page-myteam") && document.getElementById("page-myteam").classList.contains("active")) {
+      activateMyTeamTab(t);
+    }
+  });
+
+  if (myTeamTabFromHash()) {
+    const nav = document.querySelector('.nav-item[data-page="myteam"]');
+    if (nav) nav.click();
+  }
 });

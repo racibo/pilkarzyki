@@ -553,26 +553,40 @@ a:hover { text-decoration: underline; }
 
 .tabs {
   display: flex;
-  gap: 0;
-  margin-bottom: 16px;
+  flex-wrap: wrap;
+  gap: 2px 4px;
+  margin-bottom: 12px;
   border-bottom: 1px solid var(--border);
 }
 
 .tab {
-  padding: 8px 18px;
+  padding: 5px 11px;
   cursor: pointer;
   color: var(--text-dim);
   border-bottom: 2px solid transparent;
-  font-size: 0.9rem;
+  font-size: 0.82rem;
   transition: all 0.15s;
   background: none;
   border-top: none;
   border-left: none;
   border-right: none;
+  display: inline-flex;
+  align-items: center;
 }
 
 .tab:hover { color: var(--text); }
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.tab-star {
+  margin-left: 5px;
+  cursor: pointer;
+  opacity: 0.5;
+  font-size: 0.8rem;
+  user-select: none;
+  line-height: 1;
+}
+.tab-star:hover { opacity: 0.85; }
+.tab-star.fav { opacity: 1; color: var(--accent); }
 
 table {
   width: 100%;
