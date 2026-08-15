@@ -2233,28 +2233,29 @@ async function renderManagerSeasons(managerId) {
     const past = (hist.past || []).slice().sort((a, b) => String(b.season_name).localeCompare(String(a.season_name)));
     const currentHistory = hist.history || [];
     const rows = [];
-    if (currentHistory.length) {
+    if (currentHistory && currentHistory.length) {
       const last = currentHistory[currentHistory.length - 1];
       const curName = (hist.current && hist.current.season_name) ? hist.current.season_name : (last.season_name || "");
       rows.push({
         name: curName,
         points: last.total_points,
         rank: last.rank,
-        eventTotal: currentHistory.map(h => h.total_points),
         current: true
       });
     }
     past.forEach(p => rows.push({
       name: p.season_name,
       points: p.total_points,
-      rank: p.rank,
-      eventTotal: p.event_total || []
+      rank: p.rank
     }));
 
     if (!rows.length) {
       container.innerHTML = `<div style="padding:16px;color:var(--text-dim)">${t("myTeam.noSeasons")}</div>`;
       return;
     }
+
+    const pointsSeries = rows.map(r => r.points);
+    const maxPts = Math.max(...pointsSeries, 1);
 
     container.innerHTML = `
       <div style="padding:4px 16px">
@@ -2264,11 +2265,11 @@ async function renderManagerSeasons(managerId) {
           <th>${t("myTeam.rankCol")}</th>
           <th>${t("myTeam.trendCol")}</th>
         </tr></thead><tbody>
-        ${rows.map(r => `<tr>
+        ${rows.map((r, i) => `<tr>
           <td style="font-weight:600">${r.name}${r.current ? " (" + t("myTeam.current") + ")" : ""}</td>
           <td class="stat-val" style="color:var(--accent);font-weight:700">${r.points}</td>
           <td>#${r.rank}</td>
-          <td>${sparkline(r.eventTotal)}</td>
+          <td>${seasonTrend(pointsSeries, i, maxPts)}</td>
         </tr>`).join("")}
         </tbody></table>
       </div>`;
@@ -2277,18 +2278,24 @@ async function renderManagerSeasons(managerId) {
   }
 }
 
-function sparkline(values) {
-  if (!values || values.length === 0) return "";
-  const w = 220, h = 34, pad = 3;
-  const min = Math.min(...values), max = Math.max(...values);
+function seasonTrend(series, idx, maxPts) {
+  if (!series || series.length === 0) return "";
+  const w = 200, h = 34, pad = 4;
+  const min = Math.min(...series), max = Math.max(...series);
   const range = max - min || 1;
-  const pts = values.map((v, i) => {
-    const x = pad + (values.length === 1 ? w / 2 : (i / (values.length - 1)) * (w - 2 * pad));
+  const pts = series.map((v, i) => {
+    const x = pad + (series.length === 1 ? w / 2 : (i / (series.length - 1)) * (w - 2 * pad));
     const y = h - pad - ((v - min) / range) * (h - 2 * pad);
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(" ");
+  const lx = pad + (series.length === 1 ? w / 2 : (idx / (series.length - 1)) * (w - 2 * pad));
+  const ly = h - pad - ((series[idx] - min) / range) * (h - 2 * pad);
+  const barW = Math.max(2, (series[idx] / maxPts) * (w - 2 * pad));
   return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="vertical-align:middle">
+    <line x1="${pad}" y1="${h - pad}" x2="${w - pad}" y2="${h - pad}" stroke="var(--border)" stroke-width="1"/>
+    <rect x="${pad}" y="${h - pad - 3}" width="${barW.toFixed(1)}" height="3" fill="var(--accent)" opacity="0.4"/>
     <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.5"/>
+    <circle cx="${lx.toFixed(1)}" cy="${ly.toFixed(1)}" r="3" fill="#fff" stroke="var(--accent)" stroke-width="2"/>
   </svg>`;
 }
 
@@ -4686,6 +4693,14 @@ function initNav() {
       if (!archiveState.loaded) loadArchiveSeason().then(renderArchive);
       else renderArchive();
     }
+    if (item.dataset.page === "myteam") {
+      const tabs = document.getElementById("myteam-tabs");
+      if (tabs) tabs.style.display = "";
+      const idEl = document.getElementById("myteam-id");
+      const mid = idEl && idEl.value ? idEl.value.trim()
+        : managerIdForSeason(detectSeason(bootstrapData).replace("/", "-"));
+      if (mid) renderManagerSeasons(mid);
+    }
   });
 }
 
@@ -4899,7 +4914,9 @@ function initMyTeam() {
     });
     if (tabKey === "seasons") {
       const idEl = document.getElementById("myteam-id");
-      const mid = idEl && idEl.value ? idEl.value.trim() : null;
+      const mid = (idEl && idEl.value && idEl.value.trim())
+        ? idEl.value.trim()
+        : managerIdForSeason(detectSeason(bootstrapData).replace("/", "-"));
       if (mid) renderManagerSeasons(mid);
     }
   });
