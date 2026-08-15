@@ -1,4 +1,4 @@
-import { getBootstrapStatic, getPlayerSummary, getManagerPicks, getLeagueStandings, getFixtures, fetchVaastavGW, fetchGWBatch, fetchFPL, getVaastavSeason, getVaastavCumulative, getVaastavPlayerCumulative, computeExpectedPoints, vaastavTeamId } from "./api.js";
+import { getBootstrapStatic, getPlayerSummary, getManagerPicks, getLeagueStandings, getFixtures, fetchVaastavGW, fetchGWBatch, fetchFPL, getVaastavSeason, getVaastavCumulative, getVaastavPlayerCumulative, computeExpectedPoints, vaastavTeamId, getManagerHistory } from "./api.js";
 
 // Manager (FPL entry) IDs per season — the user's ID differs across seasons.
 const MANAGER_IDS = { "2026-27": 76582, "2025-26": 424097 };
@@ -2222,6 +2222,74 @@ async function runMyTeam(override) {
       `<tr><td colspan="7"><div class="error-msg">${t("common.error")}: ${err.message}</div></td></tr>`;
     showSection("myteam", "table");
   }
+}
+
+async function renderManagerSeasons(managerId) {
+  const container = document.getElementById("myteam-seasons");
+  if (!container) return;
+  container.innerHTML = `<div style="padding:16px;color:var(--text-dim)">${t("myTeam.loadingSeasons")}</div>`;
+  try {
+    const hist = await getManagerHistory(managerId);
+    const past = (hist.past || []).slice().sort((a, b) => String(b.season_name).localeCompare(String(a.season_name)));
+    const currentHistory = hist.history || [];
+    const rows = [];
+    if (currentHistory.length) {
+      const last = currentHistory[currentHistory.length - 1];
+      const curName = (hist.current && hist.current.season_name) ? hist.current.season_name : (last.season_name || "");
+      rows.push({
+        name: curName,
+        points: last.total_points,
+        rank: last.rank,
+        eventTotal: currentHistory.map(h => h.total_points),
+        current: true
+      });
+    }
+    past.forEach(p => rows.push({
+      name: p.season_name,
+      points: p.total_points,
+      rank: p.rank,
+      eventTotal: p.event_total || []
+    }));
+
+    if (!rows.length) {
+      container.innerHTML = `<div style="padding:16px;color:var(--text-dim)">${t("myTeam.noSeasons")}</div>`;
+      return;
+    }
+
+    container.innerHTML = `
+      <div style="padding:4px 16px">
+        <table><thead><tr>
+          <th>${t("myTeam.seasonCol")}</th>
+          <th>${t("myTeam.ptsCol")}</th>
+          <th>${t("myTeam.rankCol")}</th>
+          <th>${t("myTeam.trendCol")}</th>
+        </tr></thead><tbody>
+        ${rows.map(r => `<tr>
+          <td style="font-weight:600">${r.name}${r.current ? " (" + t("myTeam.current") + ")" : ""}</td>
+          <td class="stat-val" style="color:var(--accent);font-weight:700">${r.points}</td>
+          <td>#${r.rank}</td>
+          <td>${sparkline(r.eventTotal)}</td>
+        </tr>`).join("")}
+        </tbody></table>
+      </div>`;
+  } catch (e) {
+    container.innerHTML = `<div style="padding:16px;color:var(--red)">${t("common.error")}: ${e.message}</div>`;
+  }
+}
+
+function sparkline(values) {
+  if (!values || values.length === 0) return "";
+  const w = 220, h = 34, pad = 3;
+  const min = Math.min(...values), max = Math.max(...values);
+  const range = max - min || 1;
+  const pts = values.map((v, i) => {
+    const x = pad + (values.length === 1 ? w / 2 : (i / (values.length - 1)) * (w - 2 * pad));
+    const y = h - pad - ((v - min) / range) * (h - 2 * pad);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="vertical-align:middle">
+    <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.5"/>
+  </svg>`;
 }
 
 // ===================== LEADER =====================
@@ -4825,10 +4893,15 @@ function initMyTeam() {
     document.querySelectorAll("#myteam-tabs .tab").forEach(t => t.classList.remove("active"));
     tab.classList.add("active");
     const tabKey = tab.dataset.tab;
-    ["overview", "reserves", "captains", "gwhistory"].forEach(k => {
+    ["overview", "reserves", "captains", "gwhistory", "seasons"].forEach(k => {
       const el = document.getElementById(`myteam-${k}-tab`);
       if (el) el.style.display = k === tabKey ? "" : "none";
     });
+    if (tabKey === "seasons") {
+      const idEl = document.getElementById("myteam-id");
+      const mid = idEl && idEl.value ? idEl.value.trim() : null;
+      if (mid) renderManagerSeasons(mid);
+    }
   });
   const csvRun = document.getElementById("myteam-csv-run");
   if (csvRun) csvRun.addEventListener("click", runMyTeamCSV);

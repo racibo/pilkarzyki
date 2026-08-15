@@ -31,6 +31,10 @@ export async function getEntry(managerId) {
   return fetchFPL(`entry/${managerId}`);
 }
 
+export async function getManagerHistory(managerId) {
+  return fetchFPL(`entry/${managerId}/history`);
+}
+
 // ---- Vaastav FPL GitHub CSV helpers ----
 
 const VAASTAV_BASE = "https://raw.githubusercontent.com/vaastav/Fantasy-Premier-League/master/data";
